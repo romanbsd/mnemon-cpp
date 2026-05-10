@@ -75,14 +75,14 @@ cmd_init() {
   subject=$(git -C "$REPO_ROOT" log -1 --format=%s "$sha")
   date=$(git -C "$REPO_ROOT" log -1 --format=%cI "$sha")
 
-  cat > "$TRACKER_FILE" <<EOF
-# Last upstream commit evaluated by /upstream-sync.
-# Do not hand-edit unless reseeding via \`scripts/upstream_sync.sh init --force\`.
-upstream_url=$UPSTREAM_URL
-last_sha=$sha
-last_sha_subject=$subject
-last_sha_date=$date
-EOF
+  {
+    printf '# Last upstream commit evaluated by /upstream-sync.\n'
+    printf '# Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.\n'
+    printf 'upstream_url=%s\n' "$UPSTREAM_URL"
+    printf 'last_sha=%s\n' "$sha"
+    printf 'last_sha_subject=%s\n' "$subject"
+    printf 'last_sha_date=%s\n' "$date"
+  } > "$TRACKER_FILE"
 
   echo "init: $TRACKER_FILE seeded at $sha ($subject)"
 }
