@@ -161,3 +161,33 @@ test_classify_emits_correct_classes
 test_classify_rejects_rewritten_history
 test_classify_merge_commit_is_relevant
 echo "All classify tests passed."
+
+test_advance_bumps_tracker() {
+  run_helper init --force >/dev/null
+  local first_sha second_sha
+  first_sha=$(git -C "$FIXTURE_UPSTREAM" rev-list --max-parents=0 HEAD)
+  # Pick the second commit (parent + 1)
+  second_sha=$(git -C "$FIXTURE_UPSTREAM" rev-list --reverse HEAD | sed -n '2p')
+
+  awk -v s="$first_sha" '/^last_sha=/ {print "last_sha="s; next} {print}' \
+    "$LOCAL/.upstream-sync" > "$LOCAL/.upstream-sync.tmp"
+  mv "$LOCAL/.upstream-sync.tmp" "$LOCAL/.upstream-sync"
+
+  run_helper advance "$second_sha" >/dev/null
+  grep -qE "^last_sha=$second_sha\$" "$LOCAL/.upstream-sync" \
+    || fail "advance did not bump last_sha to $second_sha"
+  grep -qE "^last_sha_subject=Add README\$" "$LOCAL/.upstream-sync" \
+    || fail "advance did not update subject"
+  echo "OK: test_advance_bumps_tracker"
+}
+
+test_advance_rejects_unknown_sha() {
+  if run_helper advance "0000000000000000000000000000000000000000" 2>/dev/null; then
+    fail "advance should reject an unknown SHA"
+  fi
+  echo "OK: test_advance_rejects_unknown_sha"
+}
+
+test_advance_bumps_tracker
+test_advance_rejects_unknown_sha
+echo "All helper tests passed."

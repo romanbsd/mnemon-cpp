@@ -192,8 +192,47 @@ is_doc_meta() {
 }
 
 cmd_advance() {
-  echo "advance: not implemented yet" >&2
-  exit 99
+  local sha="${1:-}"
+  [[ -n "$sha" ]] || { echo "advance: missing SHA arg" >&2; exit 2; }
+
+  fetch_upstream
+
+  if ! git -C "$REPO_ROOT" merge-base --is-ancestor "$sha" "upstream/$UPSTREAM_BRANCH" 2>/dev/null; then
+    echo "advance: $sha is not in upstream/$UPSTREAM_BRANCH history" >&2
+    exit 1
+  fi
+
+  [[ -f "$TRACKER_FILE" ]] || { echo "advance: $TRACKER_FILE missing. Run 'init' first." >&2; exit 1; }
+
+  local full subject date
+  full=$(git -C "$REPO_ROOT" rev-parse "$sha")
+  subject=$(git -C "$REPO_ROOT" log -1 --format=%s "$full")
+  date=$(git -C "$REPO_ROOT" log -1 --format=%cI "$full")
+
+  update_kv "$TRACKER_FILE" "last_sha"         "$full"
+  update_kv "$TRACKER_FILE" "last_sha_subject" "$subject"
+  update_kv "$TRACKER_FILE" "last_sha_date"    "$date"
+
+  echo "advance: $TRACKER_FILE → $full ($subject)"
+}
+
+# Idempotent in-place key=value rewrite. Preserves comments and unknown lines.
+update_kv() {
+  local file="$1" key="$2" value="$3"
+  local tmp found=0
+  tmp=$(mktemp)
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$key="* ]]; then
+      printf '%s=%s\n' "$key" "$value" >> "$tmp"
+      found=1
+    else
+      printf '%s\n' "$line" >> "$tmp"
+    fi
+  done < "$file"
+  if [[ $found -eq 0 ]]; then
+    printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  fi
+  mv "$tmp" "$file"
 }
 
 main() {
