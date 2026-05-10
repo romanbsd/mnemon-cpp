@@ -60,7 +60,7 @@ jobs:
           cp build/mnemon artifact/mnemon
           chmod +x artifact/mnemon
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: mnemon-${{ matrix.asset }}-${{ github.ref_name }}
           path: artifact/mnemon
