@@ -1,6 +1,6 @@
 ---
 name: upstream-sync
-description: Use when porting recent commits from mnemon-dev/mnemon (the Go reference for this C++ port) into mnemon-cpp. Triggered by /upstream-sync. Opens stacked PRs — does not auto-merge.
+description: Use when porting, syncing, or catching up commits from upstream mnemon-dev/mnemon (the Go reference) into mnemon-cpp — triggered by /upstream-sync. Symptoms: this repo is behind upstream, an upstream tag was cut, or you want to mirror recent upstream changes (CLI, schema, asset, or behavior).
 ---
 
 # upstream-sync
@@ -61,7 +61,7 @@ Process commits in the order returned (oldest first). For each commit `C`:
 
 #### `doc-meta-only`
 
-No branch. Accumulate the SHA. When the next branch is created, run `bash scripts/upstream_sync.sh advance <sha>` for each accumulated SHA before doing other work, and include the resulting `.upstream-sync` change in that branch's commit. If the batch ends on `doc-meta-only` commits with no relevant follow-up, open a final PR off the last branch tip (or master) titled `Housekeeping: advance upstream-sync tracker through N no-op commits` carrying only the tracker bump.
+No branch. Accumulate the SHA. When the next branch is created, run `bash scripts/upstream_sync.sh advance <sha>` for each accumulated SHA before doing other work, and include the resulting `.upstream-sync` change in that branch's commit. If the batch ends on `doc-meta-only` commits with no relevant follow-up, open a final PR off the last branch tip created in this batch — or off `master` if no port-PR was opened during the batch (i.e., everything was no-op) — titled `Housekeeping: advance upstream-sync tracker through N no-op commits` carrying only the tracker bump.
 
 #### `asset-only`
 
@@ -79,14 +79,14 @@ No branch. Accumulate the SHA. When the next branch is created, run `bash script
 #### `relevant`
 
 1. Create branch off previous tip.
-2. Read upstream diff: `git show <full-sha>` (the `upstream` remote is fetched after `classify`; the SHA is locally resolvable).
+2. Read upstream diff: `git show <full-sha>` (the `upstream` remote is fetched after `classify`; the SHA is locally resolvable). If you are resuming mid-batch in a fresh session, run `git fetch upstream` first to ensure the SHA is present.
 3. Decide: does this commit need a C++ port? If clearly no-op (e.g., upstream refactored a private Go helper with no observable behavior change), treat as `doc-meta-only` — accumulate and move on. State your reasoning in a recallium note (type=decision).
 4. If a port is needed: write or modify a TEST FIRST.
    - Behavioral changes (CLI output, JSON keys, error wording, exit codes, schema): edit `scripts/e2e_test.sh`. Follow the existing `assert_jq` and milestone-banner patterns.
    - Pure in-process logic (engine helpers, math, parsing): add a Catch2 test in `tests/smoke_test.cpp`.
    - The test must FAIL before you implement.
 5. Implement the change in `src/`. Match `mnemon-spec.md` parity over idiomatic C++ — JSON keys, error wording, exit codes, file layout are part of the contract enforced by `scripts/e2e_test.sh`.
-6. `make build && make test`. Loop until green. If you can't reach green after three reasonable iterations, STOP and report.
+6. `make build && make test`. Loop until green. If `make test` is still failing after three DISTINCT implementation attempts (not three retries of the same change), STOP and report the failing test output.
 7. `bash scripts/upstream_sync.sh advance <full-sha>`.
 8. If `tag` is non-null, append `<tag>=<full-sha>` to `.upstream-tag-pending`.
 9. `git add` impacted source/test files plus `.upstream-sync` (and `.upstream-tag-pending` if applicable).
@@ -161,6 +161,9 @@ The script reads `.upstream-tag-pending`, finds local commits via the trailer (w
 | `gh pr create` fails | STOP. Surface the gh error. Local branch and tracker bump exist locally; user can re-invoke after cleanup. |
 | Mid-batch resume after a kill | Use the Step 2 resume check — recallium notes + `gh pr list --search "head:upstream-sync/"`. |
 | Squash-merge stripped the trailer | The release-tags script handles the fallback automatically via `gh pr list --search "... in:body"`. |
+| Working tree has uncommitted changes | STOP before invoking. Commit or stash first. The skill creates branches off `master` or the previous tip; dirty state can either follow you across the switch or block it. |
+| `.upstream-tag-pending` is missing | The pre-flight step creates this file. If absent (e.g., fresh checkout pre-bootstrap), STOP and tell the user to run `touch .upstream-tag-pending && git add .upstream-tag-pending && git commit -m "Add empty tag-pending sidecar"` before re-invoking. Don't auto-create it mid-batch. |
+| `gh` is unauthenticated | `gh pr create` will fail (often with an interactive prompt). STOP and tell the user to run `gh auth login`. Local commits and tracker bumps remain on the unpushed branch; re-invocation resumes after auth. |
 
 ## Red flags — STOP and re-read
 
@@ -172,9 +175,13 @@ The script reads `.upstream-tag-pending`, finds local commits via the trailer (w
 | "The classifier got it wrong, I'll re-classify mentally" | Trust the deterministic classifier. If it's wrong, fix `classify_paths` in `scripts/upstream_sync.sh`, not the skill loop. |
 | "The trailer is just metadata, I'll shorten it" | The `Upstream-Commit:` trailer is load-bearing for tag mirroring. Verbatim. |
 | "I'll auto-merge to speed things up" | The user merges. The skill stops at PR open. |
+| "Just rebase the stack instead of branching off the previous tip" | Rebase rewrites SHAs; any already-open PR will lose its base. Always branch off the previous processed branch tip; never rebase a stacked branch. |
+| "make test takes 30 seconds, I'll skip it for the asset-only commit since assets are static" | Asset bytes are vendored verbatim into the binary; a stale `setup_assets/` plus a cached build can produce a binary that ships old assets. ALWAYS `make build && make test` even for asset-only ports. |
+| "I can hand-edit .upstream-sync to bump the tracker" | The helper's `advance` validates the SHA is in upstream history (`merge-base --is-ancestor`). Hand-editing bypasses that and can silently corrupt the tracker (off-by-one, forked branch). Always go through `bash scripts/upstream_sync.sh advance <sha>`. |
 
 ## Common mistakes
 
 - Forgetting to bump `.upstream-sync` inside the same commit that opens the PR. Result: next batch replays the same commit.
 - Including unrelated changes in a port-PR. Each PR contains only the C++ diff for its upstream commit (plus tracker bump and optional tag-pending entry).
+- Forgetting to `git add` newly created files. Always stage with explicit paths (`git add path/to/new_file.cpp`) — `git add -u` only stages modifications, silently omitting new sources, tests, or fixtures.
 - Force-pushing to a stacked branch after later branches have been built off it. If you must rewrite, rebuild the entire stack from that point forward.
