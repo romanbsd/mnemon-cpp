@@ -5,4 +5,4 @@
 *.swp
 compile_commands.json
 .cache
-.claude
+.claude/settings.local.json
