@@ -20,6 +20,17 @@ If `.upstream-sync` is missing when you invoke the skill, stop and tell the user
 
 ## The autonomous batch loop
 
+### Step 0 — Pre-flight checks
+
+Before classifying or branching, verify:
+
+- **Working tree is clean.** Run `git status --short`; if there's any output, STOP and tell the user to commit or stash. The skill creates branches off `master` or the previous tip — dirty state will either follow you across the switch or block it.
+- **`.upstream-sync` exists.** If not, the user hasn't bootstrapped. STOP and tell them to run `bash scripts/upstream_sync.sh init` (and commit the result) per pre-flight.
+- **`.upstream-tag-pending` exists.** If not, STOP and ask the user to create it (`touch .upstream-tag-pending && git add .upstream-tag-pending && git commit -m "Add empty tag-pending sidecar"`). Don't auto-create mid-batch.
+- **`gh` is authenticated.** Run `gh auth status` once; if it errors, STOP and tell the user to run `gh auth login`. Don't try `gh pr create` and discover the failure mid-stack.
+
+If any check fails: STOP. Do not branch. Do not modify `.upstream-sync`.
+
 ### Step 1 — Classify
 
 Run:
@@ -45,7 +56,7 @@ If `commits` is empty: print "Up to date with upstream." and stop.
 
 ### Step 2 — Resume check
 
-Search recallium for memories tagged `upstream-sync` referencing any SHA in the classify output. Cross-check `gh pr list --search "head:upstream-sync/" --state open --json headRefName -q '.[].headRefName'`. Skip any commit whose port-branch already exists upstream.
+Search recallium for memories tagged `upstream-sync` referencing any SHA in the classify output. Cross-check `gh pr list --search "head:upstream-sync/" --state open --json headRefName -q '.[].headRefName'` against `origin` (the fork — that's where port branches live; never push to `upstream`). Skip any commit whose port-branch is already open as a PR on `origin`.
 
 ### Step 3 — Per-commit dispatch
 
@@ -150,7 +161,10 @@ When the user runs `/upstream-sync release-tags` (or invokes the script directly
 bash scripts/upstream_release_tags.sh
 ```
 
-The script reads `.upstream-tag-pending`, finds local commits via the trailer (with a `gh pr list --search "... in:body"` fallback), tags them with the upstream tag verbatim, pushes the tags, and creates GitHub releases. It removes cleared entries from `.upstream-tag-pending`. If any entries cleared, open a small housekeeping PR carrying the cleared sidecar.
+The script reads `.upstream-tag-pending`, finds local commits via the trailer (with a `gh pr list --search "... in:body"` fallback), tags them with the upstream tag verbatim, pushes the tags, and creates GitHub releases. It removes cleared entries from `.upstream-tag-pending`. If any entries cleared, the script writes the trimmed `.upstream-tag-pending` locally but does NOT push or open a PR. Two ways to land that change:
+
+- **If you (the skill) ran `release-tags` as part of an autonomous batch:** add the trimmed `.upstream-tag-pending` to your in-flight batch, OR open a one-line housekeeping PR titled `Housekeeping: clear N mirrored upstream tags from .upstream-tag-pending`.
+- **If the user ran `bash scripts/upstream_release_tags.sh` directly (most common):** the user is responsible for committing the trimmed sidecar themselves, e.g. `git commit -am "Clear mirrored upstream tags from .upstream-tag-pending"` plus `git push`. The skill is not invoked in that path.
 
 ## Failure modes
 
