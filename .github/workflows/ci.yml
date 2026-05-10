@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  cpp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build jq g++-13
+
+      - name: Configure & build
+        env:
+          CC: gcc-13
+          CXX: g++-13
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build mnemon
+        run: cmake --build build -j
+
+      - name: Unit tests
+        run: cd build && ctest --output-on-failure
+
+      - name: E2E
+        env:
+          MNEMON_TEST_BINARY: ${{ github.workspace }}/build/mnemon
+        run: bash scripts/e2e_test.sh
