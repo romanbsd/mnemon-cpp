@@ -173,8 +173,12 @@ classify_paths() {
     # asset + optional doc-meta, no relevant: still asset-only
     # (asset takes precedence; the asset-sync script handles it)
     echo "asset-only"
-  else
+  elif [[ $has_doc_meta -eq 1 ]]; then
     echo "doc-meta-only"
+  else
+    # Empty diff (merge commit without -m, or empty commit).
+    # Force the skill to examine and decide rather than silently skipping.
+    echo "relevant"
   fi
 }
 

@@ -113,6 +113,51 @@ test_classify_rejects_rewritten_history() {
   echo "OK: test_classify_rejects_rewritten_history"
 }
 
+test_classify_merge_commit_is_relevant() {
+  # Build a fresh fixture with two parallel branches and a merge commit.
+  local UP="$TEST_TMP/upstream-merge"
+  rm -rf "$UP"
+  git init -q -b main "$UP"
+  git -C "$UP" config user.email "merge@test"
+  git -C "$UP" config user.name "Merge"
+  git -C "$UP" config commit.gpgsign false
+  git -C "$UP" commit -q --allow-empty -m "root"
+  echo "branch a" > "$UP/a.md"
+  git -C "$UP" add a.md
+  git -C "$UP" commit -q -m "a"
+  git -C "$UP" checkout -q -b side HEAD~1
+  echo "branch b" > "$UP/b.md"
+  git -C "$UP" add b.md
+  git -C "$UP" commit -q -m "b"
+  git -C "$UP" checkout -q main
+  # Force a true merge (not fast-forward), with no conflicts because file paths differ.
+  git -C "$UP" merge --no-ff --no-edit -q side >/dev/null
+  local merge_sha
+  merge_sha=$(git -C "$UP" rev-parse HEAD)
+
+  # Now point the helper at this fixture and seed the tracker at root.
+  ( cd "$LOCAL" && \
+    MNEMON_UPSTREAM_URL="$UP" MNEMON_UPSTREAM_BRANCH=main \
+    bash "$HELPER" init --force >/dev/null )
+  local root
+  root=$(git -C "$UP" rev-list --max-parents=0 HEAD)
+  awk -v s="$root" '/^last_sha=/ {print "last_sha="s; next} {print}' \
+    "$LOCAL/.upstream-sync" > "$LOCAL/.upstream-sync.tmp"
+  mv "$LOCAL/.upstream-sync.tmp" "$LOCAL/.upstream-sync"
+
+  local out
+  out=$( cd "$LOCAL" && \
+         MNEMON_UPSTREAM_URL="$UP" MNEMON_UPSTREAM_BRANCH=main \
+         bash "$HELPER" classify )
+
+  # The merge commit must appear with class "relevant".
+  local merge_class
+  merge_class=$(jq -r --arg s "$merge_sha" '.commits[] | select(.sha == $s) | .class' <<< "$out")
+  [[ "$merge_class" == "relevant" ]] || fail "merge commit classified as '$merge_class', expected 'relevant'"
+  echo "OK: test_classify_merge_commit_is_relevant"
+}
+
 test_classify_emits_correct_classes
 test_classify_rejects_rewritten_history
+test_classify_merge_commit_is_relevant
 echo "All classify tests passed."
