@@ -61,7 +61,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   if [[ -z "$local_sha" ]] && command -v gh >/dev/null 2>&1; then
     local_sha=$(gh pr list --state merged \
       --search "Upstream-Commit: $upstream_sha in:body" \
-      --json mergeCommit -q '.[0].mergeCommit.oid' 2>/dev/null || true)
+      --json mergeCommit -q '.[0].mergeCommit.oid // empty' 2>/dev/null || true)
   fi
 
   if [[ -z "$local_sha" ]]; then
@@ -76,10 +76,16 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     continue
   fi
 
-  echo "release-tags: tagging $local_tag at $local_sha"
-  git -C "$REPO_ROOT" tag "$local_tag" "$local_sha"
+  if git -C "$REPO_ROOT" rev-parse "refs/tags/$local_tag" >/dev/null 2>&1; then
+    echo "release-tags: $local_tag already tagged locally, skipping tag creation"
+  else
+    echo "release-tags: tagging $local_tag at $local_sha"
+    git -C "$REPO_ROOT" tag "$local_tag" "$local_sha"
+  fi
   if [[ "${RELEASE_TAGS_NO_PUSH:-0}" != "1" ]]; then
-    git -C "$REPO_ROOT" push origin "$local_tag"
+    if ! git -C "$REPO_ROOT" push origin "$local_tag"; then
+      echo "release-tags: push failed for $local_tag (tag exists locally, will retry on next run)" >&2
+    fi
   fi
 
   if [[ $SKIP_RELEASE -eq 0 ]] && command -v gh >/dev/null 2>&1; then
