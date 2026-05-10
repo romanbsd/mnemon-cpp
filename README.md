@@ -1,6 +1,8 @@
 # mnemon (C++23)
 
-Standalone CLI and engine port. Behavior is defined by [mnemon-spec.md](mnemon-spec.md).
+Standalone CLI and engine port of [Mnemon GO](https://github.com/mnemon-dev/mnemon)
+Useful for memory and disk space constrained systems.
+Behavior is defined by [mnemon-spec.md](mnemon-spec.md).
 
 **Layout:** This directory **is** the repository root (`mnemon-cpp`): CMake, `src/`, vendored `setup_assets/`, `scripts/e2e_test.sh`, and CI all live here.
 
