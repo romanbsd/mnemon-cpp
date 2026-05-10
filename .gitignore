@@ -1,0 +1,8 @@
+/build
+/.testdata
+.DS_Store
+*.user
+*.swp
+compile_commands.json
+.cache
+.claude

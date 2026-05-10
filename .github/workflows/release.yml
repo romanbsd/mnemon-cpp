@@ -1,0 +1,66 @@
+name: Release binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            asset: linux-amd64
+          - runner: ubuntu-24.04-arm
+            asset: linux-arm64
+          - runner: macos-15-intel
+            asset: macos-amd64
+          - runner: macos-15
+            asset: macos-arm64
+
+    runs-on: ${{ matrix.runner }}
+    name: Build (${{ matrix.asset }})
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++-13
+
+      - name: Configure & build (Linux)
+        if: runner.os == 'Linux'
+        env:
+          CC: gcc-13
+          CXX: g++-13
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      - name: Configure & build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+
+      - name: Unit tests
+        run: cd build && ctest --output-on-failure
+
+      - name: Stage binary
+        run: |
+          mkdir -p artifact
+          cp build/mnemon artifact/mnemon
+          chmod +x artifact/mnemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mnemon-${{ matrix.asset }}-${{ github.ref_name }}
+          path: artifact/mnemon
