@@ -10,7 +10,7 @@ unset _git_root
 
 UPSTREAM_DEFAULT_URL="https://github.com/mnemon-dev/mnemon.git"
 UPSTREAM_URL="${MNEMON_UPSTREAM_URL:-$UPSTREAM_DEFAULT_URL}"
-UPSTREAM_BRANCH="${MNEMON_UPSTREAM_BRANCH:-main}"
+UPSTREAM_BRANCH_OVERRIDE="${MNEMON_UPSTREAM_BRANCH:-}"
 TRACKER_FILE="$REPO_ROOT/.upstream-sync"
 
 usage() {
@@ -25,7 +25,7 @@ Subcommands:
 
 Env:
   MNEMON_UPSTREAM_URL    Override upstream URL (default: github.com/mnemon-dev/mnemon).
-  MNEMON_UPSTREAM_BRANCH Override upstream branch (default: main).
+  MNEMON_UPSTREAM_BRANCH Override branch (default: auto-detect from upstream/HEAD).
 EOF
 }
 
@@ -40,6 +40,26 @@ ensure_upstream_remote() {
       git -C "$REPO_ROOT" remote set-url upstream "$UPSTREAM_URL"
     fi
   fi
+}
+
+# Resolve the upstream branch to use. Override via MNEMON_UPSTREAM_BRANCH;
+# otherwise auto-detect from upstream/HEAD (which `git remote set-head --auto`
+# populates after a fetch). Fails clearly if neither is available.
+resolve_upstream_branch() {
+  if [[ -n "$UPSTREAM_BRANCH_OVERRIDE" ]]; then
+    printf '%s\n' "$UPSTREAM_BRANCH_OVERRIDE"
+    return
+  fi
+  git -C "$REPO_ROOT" remote set-head upstream --auto >/dev/null 2>&1 || true
+  local head_ref
+  head_ref=$(git -C "$REPO_ROOT" symbolic-ref --short refs/remotes/upstream/HEAD 2>/dev/null || true)
+  if [[ -z "$head_ref" ]]; then
+    echo "upstream-sync: unable to detect upstream's default branch." >&2
+    echo "  Set MNEMON_UPSTREAM_BRANCH explicitly (e.g., MNEMON_UPSTREAM_BRANCH=master)." >&2
+    exit 1
+  fi
+  # head_ref looks like "upstream/master" — strip the prefix.
+  printf '%s\n' "${head_ref#upstream/}"
 }
 
 unshallow_if_needed() {
@@ -70,8 +90,11 @@ cmd_init() {
 
   fetch_upstream
 
+  local upstream_branch
+  upstream_branch=$(resolve_upstream_branch)
+
   local sha subject date
-  sha=$(git -C "$REPO_ROOT" rev-parse "upstream/$UPSTREAM_BRANCH")
+  sha=$(git -C "$REPO_ROOT" rev-parse "upstream/$upstream_branch")
   subject=$(git -C "$REPO_ROOT" log -1 --format=%s "$sha")
   date=$(git -C "$REPO_ROOT" log -1 --format=%cI "$sha")
 
@@ -95,18 +118,21 @@ cmd_classify() {
 
   fetch_upstream
 
+  local upstream_branch
+  upstream_branch=$(resolve_upstream_branch)
+
   local last_sha
   last_sha=$(awk -F= '/^last_sha=/{print $2}' "$TRACKER_FILE")
   [[ -n "$last_sha" ]] || { echo "classify: last_sha empty in $TRACKER_FILE" >&2; exit 1; }
 
-  if ! git -C "$REPO_ROOT" merge-base --is-ancestor "$last_sha" "upstream/$UPSTREAM_BRANCH" 2>/dev/null; then
-    echo "classify: recorded last_sha=$last_sha is not an ancestor of upstream/$UPSTREAM_BRANCH." >&2
+  if ! git -C "$REPO_ROOT" merge-base --is-ancestor "$last_sha" "upstream/$upstream_branch" 2>/dev/null; then
+    echo "classify: recorded last_sha=$last_sha is not an ancestor of upstream/$upstream_branch." >&2
     echo "classify: upstream history may have been rewritten. Re-seed with 'init --force'." >&2
     exit 1
   fi
 
   local head_sha
-  head_sha=$(git -C "$REPO_ROOT" rev-parse "upstream/$UPSTREAM_BRANCH")
+  head_sha=$(git -C "$REPO_ROOT" rev-parse "upstream/$upstream_branch")
 
   emit_classification "$last_sha" "$head_sha"
 }
@@ -197,8 +223,11 @@ cmd_advance() {
 
   fetch_upstream
 
-  if ! git -C "$REPO_ROOT" merge-base --is-ancestor "$sha" "upstream/$UPSTREAM_BRANCH" 2>/dev/null; then
-    echo "advance: $sha is not in upstream/$UPSTREAM_BRANCH history" >&2
+  local upstream_branch
+  upstream_branch=$(resolve_upstream_branch)
+
+  if ! git -C "$REPO_ROOT" merge-base --is-ancestor "$sha" "upstream/$upstream_branch" 2>/dev/null; then
+    echo "advance: $sha is not in upstream/$upstream_branch history" >&2
     exit 1
   fi
 

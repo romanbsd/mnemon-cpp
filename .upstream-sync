@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=f4d789c9041f2d221e4aec558ba8aeaa3c57dfa3
-last_sha_subject=Bump session to v2
-last_sha_date=2026-05-10T17:45:27+03:00
+last_sha=88b772fc6c15d9b846e0e085063baa1216668d1b
+last_sha_subject=chore: add env example defaults (#7)
+last_sha_date=2026-05-06T22:07:57+08:00
