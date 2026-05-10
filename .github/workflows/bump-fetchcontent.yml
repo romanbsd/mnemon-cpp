@@ -1,0 +1,28 @@
+name: Bump FetchContent tags
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Bump GIT_TAG lines in CMakeLists.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/bump_fetchcontent_tags.py
+
+      - uses: peter-evans/create-pull-request@v8
+        with:
+          commit-message: "chore: bump FetchContent dependency tags"
+          title: "chore: bump FetchContent dependency tags"
+          branch: bump-fetchcontent-tags
+          delete-branch: true
