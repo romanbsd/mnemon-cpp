@@ -49,7 +49,6 @@ test_dry_run_finds_trailer() {
 }
 
 test_real_run_clears_matched_entry() {
-  # Use --no-release and stub `git push` by setting GIT_PUSH_DRY_RUN=1 in script.
   # The script must consult RELEASE_TAGS_NO_PUSH env var to skip the push.
   local out
   out=$(RELEASE_TAGS_NO_PUSH=1 run_script --no-release 2>&1)
@@ -67,6 +66,44 @@ test_real_run_clears_matched_entry() {
   echo "OK: test_real_run_clears_matched_entry"
 }
 
+test_idempotent_rerun_with_existing_tag() {
+  # Re-run the script after a prior successful run: the tag exists locally,
+  # and the matched entry is no longer in pending. The script should be a no-op,
+  # not crash on a duplicate-tag attempt.
+  local out
+  out=$(RELEASE_TAGS_NO_PUSH=1 run_script --no-release 2>&1)
+  # No mirrored entries this time (v0.0.1 already gone from pending, v0.0.2 still unmerged)
+  echo "$out" | grep -q "v0.0.2.*not merged yet" || fail "expected v0.0.2 still skipped; got: $out"
+  echo "$out" | grep -q "tagging v0.0.1" && fail "should NOT re-tag v0.0.1; got: $out"
+  echo "OK: test_idempotent_rerun_with_existing_tag"
+}
+
+test_push_failure_does_not_abort_sidecar_rewrite() {
+  # Re-prime pending with a new entry that has a matching trailer
+  local UP_SHA="cafebabe1234567890cafebabe1234567890cafe"
+  ( cd "$LOCAL" && \
+    echo y > y.txt && git add y.txt && \
+    git commit -q -m "Port: another thing
+
+Upstream-Commit: $UP_SHA" )
+  cat > "$LOCAL/.upstream-tag-pending" <<EOF
+v0.0.3=$UP_SHA
+EOF
+  # Force `git push` to fail by pointing origin at a bogus URL.
+  ( cd "$LOCAL" && git remote add origin "/nonexistent/path-$$.git" 2>/dev/null || git remote set-url origin "/nonexistent/path-$$.git" )
+  local out
+  out=$( run_script --no-release 2>&1 || true )
+  # The tag should still be created locally
+  git -C "$LOCAL" rev-parse refs/tags/v0.0.3 >/dev/null || fail "v0.0.3 should be created locally even when push fails"
+  # The sidecar should still be rewritten (entry removed)
+  if grep -qE "^v0.0.3=" "$LOCAL/.upstream-tag-pending"; then
+    fail "v0.0.3 should be removed from pending despite push failure"
+  fi
+  echo "OK: test_push_failure_does_not_abort_sidecar_rewrite"
+}
+
 test_dry_run_finds_trailer
 test_real_run_clears_matched_entry
+test_idempotent_rerun_with_existing_tag
+test_push_failure_does_not_abort_sidecar_rewrite
 echo "All release-tags tests passed."
