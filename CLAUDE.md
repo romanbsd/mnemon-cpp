@@ -98,3 +98,16 @@ A "store" is a named subdirectory `data/<name>/mnemon.db` under `MNEMON_DATA_DIR
 - **`db->log_op(...)` after every mutating command** — the `log` subcommand is part of the user-visible contract (E2E asserts on it).
 - The unit test target (`tests/smoke_test.cpp`) is currently a single Catch2 placeholder. Real coverage lives in `scripts/e2e_test.sh`. If you add a Catch2 test, wire it into the existing `cpp_tests` executable in `CMakeLists.txt` rather than creating a new target.
 - `.testdata/` is created and wiped by `e2e_test.sh` on each run; never check it in (already gitignored).
+
+## Staying in sync with upstream Go binary
+
+The upstream Go reference (`https://github.com/mnemon-dev/mnemon`) is the source of truth for the parity contract. New upstream commits are ported by the `/upstream-sync` skill (`.claude/skills/upstream-sync/SKILL.md`). The skill processes new commits in one autonomous batch, opens one stacked PR per commit that needs porting, and stops without merging — the human merges in order.
+
+State files (committed at repo root):
+
+- `.upstream-sync` — `key=value` tracker recording the last upstream SHA evaluated. Bumped by `scripts/upstream_sync.sh advance <sha>` inside each port-PR. Re-seed with `scripts/upstream_sync.sh init --force` only if upstream history was rewritten.
+- `.upstream-tag-pending` — `<tag>=<upstream-sha>` sidecar listing upstream tags whose port-PR hasn't been merged yet. Cleared by `scripts/upstream_release_tags.sh` after merges.
+
+Each port-PR's commit and body carry an `Upstream-Commit: <full-sha>` trailer; this is load-bearing for tag mirroring. Don't reformat or drop it.
+
+Helper tests run via `make test-helper`.
