@@ -66,14 +66,26 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
   }
 
   std::vector<DiffMatch> matches;
-  for (const auto& c : candidates) {
-    double token_sim = content_similarity(new_content, c.insight.content);
-    double cosine_sim = 0;
-    if (!opts.new_embedding.empty()) {
+  std::vector<const std::vector<double>*> cand_vecs;
+  std::vector<double> cand_cos;
+  if (!opts.new_embedding.empty()) {
+    cand_vecs.reserve(candidates.size());
+    for (const auto& c : candidates) {
       auto it = embed_map.find(c.insight.id);
       if (it != embed_map.end() && !it->second.empty()) {
-        cosine_sim = mnemon::cosine_similarity(opts.new_embedding, it->second);
+        cand_vecs.push_back(&it->second);
+      } else {
+        cand_vecs.push_back(nullptr);
       }
+    }
+    cand_cos = mnemon::cosine_similarity_many(opts.new_embedding, cand_vecs);
+  }
+  for (size_t idx = 0; idx < candidates.size(); ++idx) {
+    const auto& c = candidates[idx];
+    double token_sim = content_similarity(new_content, c.insight.content);
+    double cosine_sim = 0;
+    if (!cand_cos.empty()) {
+      cosine_sim = cand_cos[idx];
     }
     double similarity = token_sim;
     // Strong embedding agreement can override token Jaccard when text wording diverges.
@@ -94,13 +106,22 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
       double sim;
     };
     std::vector<P> top_cos;
+    std::vector<const std::vector<double>*> second_vecs;
+    std::vector<std::string> second_ids;
+    second_vecs.reserve(opts.existing_embed.size());
+    second_ids.reserve(opts.existing_embed.size());
     for (const auto& ei : opts.existing_embed) {
       if (seen[ei.id]) {
         continue;
       }
-      double cs = mnemon::cosine_similarity(opts.new_embedding, ei.embedding);
+      second_ids.push_back(ei.id);
+      second_vecs.push_back(&ei.embedding);
+    }
+    auto second_cos = mnemon::cosine_similarity_many(opts.new_embedding, second_vecs);
+    for (size_t i = 0; i < second_ids.size(); ++i) {
+      double cs = second_cos[i];
       if (cs >= 0.7) {
-        top_cos.push_back({ei.id, cs});
+        top_cos.push_back({second_ids[i], cs});
       }
     }
     std::sort(top_cos.begin(), top_cos.end(), [](const P& a, const P& b) { return a.sim > b.sim; });

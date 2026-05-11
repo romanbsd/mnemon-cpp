@@ -81,12 +81,22 @@ std::vector<VecHit> vector_search_from_cache(const std::unordered_map<std::strin
     return {};
   }
   std::vector<VecHit> hits;
+  std::vector<std::string> ids;
+  std::vector<const std::vector<double>*> vec_refs;
+  ids.reserve(cache.size());
+  vec_refs.reserve(cache.size());
   for (const auto& [id, vec] : cache) {
-    double sim = mnemon::cosine_similarity(query_vec, vec);
+    ids.push_back(id);
+    vec_refs.push_back(&vec);
+  }
+
+  auto sims = mnemon::cosine_similarity_many(query_vec, vec_refs);
+  for (size_t i = 0; i < ids.size(); ++i) {
+    double sim = sims[i];
     if (sim <= 0.1) { // same cutoff as semantic edge builder noise floor
       continue;
     }
-    hits.push_back({id, sim});
+    hits.push_back({ids[i], sim});
   }
   std::sort(hits.begin(), hits.end(), [](const VecHit& a, const VecHit& b) { return a.similarity > b.similarity; });
   if (static_cast<int>(hits.size()) > limit) {
