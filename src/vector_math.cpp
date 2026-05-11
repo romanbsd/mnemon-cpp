@@ -2,6 +2,9 @@
 
 #include <cmath>
 #include <cstring>
+#if defined(__APPLE__)
+#include <Accelerate/Accelerate.h>
+#endif
 
 namespace mnemon {
 
@@ -10,16 +13,86 @@ double cosine_similarity(const std::vector<double>& a, const std::vector<double>
   if (a.size() != b.size() || a.empty()) {
     return 0;
   }
-  double dot = 0, na = 0, nb = 0;
+  double dot = 0;
+  double na = 0;
+  double nb = 0;
+#if defined(__APPLE__)
+  const auto n = static_cast<vDSP_Length>(a.size());
+  vDSP_dotprD(a.data(), 1, b.data(), 1, &dot, n);
+  vDSP_dotprD(a.data(), 1, a.data(), 1, &na, n);
+  vDSP_dotprD(b.data(), 1, b.data(), 1, &nb, n);
+#else
   for (size_t i = 0; i < a.size(); ++i) {
     dot += a[i] * b[i];
     na += a[i] * a[i];
     nb += b[i] * b[i];
   }
+#endif
   if (na == 0 || nb == 0) {
     return 0;
   }
   return dot / (std::sqrt(na) * std::sqrt(nb));
+}
+
+std::vector<double> cosine_similarity_many(const std::vector<double>& query,
+                                           const std::vector<const std::vector<double>*>& vectors) {
+  std::vector<double> out(vectors.size(), 0.0);
+  if (query.empty() || vectors.empty()) {
+    return out;
+  }
+
+#if defined(__APPLE__)
+  double query_sq = 0;
+  const auto n = static_cast<vDSP_Length>(query.size());
+  vDSP_dotprD(query.data(), 1, query.data(), 1, &query_sq, n);
+  if (query_sq == 0) {
+    return out;
+  }
+  const double query_norm = std::sqrt(query_sq);
+
+  std::vector<size_t> valid_idx;
+  std::vector<double> matrix;
+  valid_idx.reserve(vectors.size());
+  matrix.reserve(vectors.size() * query.size());
+
+  for (size_t i = 0; i < vectors.size(); ++i) {
+    const auto* v = vectors[i];
+    if (!v || v->size() != query.size()) {
+      continue;
+    }
+    valid_idx.push_back(i);
+    matrix.insert(matrix.end(), v->begin(), v->end());
+  }
+
+  if (valid_idx.empty()) {
+    return out;
+  }
+
+  const int rows = static_cast<int>(valid_idx.size());
+  const int cols = static_cast<int>(query.size());
+  std::vector<double> dots(valid_idx.size(), 0.0);
+  cblas_dgemv(CblasRowMajor, CblasNoTrans, rows, cols, 1.0, matrix.data(), cols, query.data(), 1, 0.0, dots.data(), 1);
+
+  for (size_t r = 0; r < valid_idx.size(); ++r) {
+    const double* row = matrix.data() + r * query.size();
+    double row_sq = 0;
+    vDSP_dotprD(row, 1, row, 1, &row_sq, n);
+    if (row_sq == 0) {
+      continue;
+    }
+    out[valid_idx[r]] = dots[r] / (query_norm * std::sqrt(row_sq));
+  }
+  return out;
+#else
+  for (size_t i = 0; i < vectors.size(); ++i) {
+    const auto* v = vectors[i];
+    if (!v) {
+      continue;
+    }
+    out[i] = cosine_similarity(query, *v);
+  }
+  return out;
+#endif
 }
 
 // Little-endian float64 bytes — must round-trip with Go’s blob layout for DB compatibility.

@@ -44,13 +44,22 @@ int create_semantic_edges(Database& db, Insight& insight, EmbedCache* cache) {
     double sim;
   };
   std::vector<Sc> candidates;
+  std::vector<std::string> ids;
+  std::vector<const std::vector<double>*> vec_refs;
+  ids.reserve(cache->size());
+  vec_refs.reserve(cache->size());
   for (const auto& [id, other_vec] : *cache) {
     if (id == insight.id) {
       continue;
     }
-    double cos_sim = mnemon::cosine_similarity(insight_vec, other_vec);
+    ids.push_back(id);
+    vec_refs.push_back(&other_vec);
+  }
+  auto sims = mnemon::cosine_similarity_many(insight_vec, vec_refs);
+  for (size_t i = 0; i < ids.size(); ++i) {
+    double cos_sim = sims[i];
     if (cos_sim >= kAutoSemanticThreshold) {
-      candidates.push_back({id, cos_sim});
+      candidates.push_back({ids[i], cos_sim});
     }
   }
   std::sort(candidates.begin(), candidates.end(), [](const Sc& a, const Sc& b) { return a.sim > b.sim; });
@@ -97,13 +106,22 @@ static std::vector<SemanticCandidate> find_by_embedding(Database& db, const Insi
     double sim;
   };
   std::vector<Sc> hits;
+  std::vector<std::string> ids;
+  std::vector<const std::vector<double>*> vec_refs;
+  ids.reserve(cache.size());
+  vec_refs.reserve(cache.size());
   for (const auto& [id, vec] : cache) {
     if (id == insight.id) {
       continue;
     }
-    double cos_sim = mnemon::cosine_similarity(it->second, vec);
+    ids.push_back(id);
+    vec_refs.push_back(&vec);
+  }
+  auto sims = mnemon::cosine_similarity_many(it->second, vec_refs);
+  for (size_t i = 0; i < ids.size(); ++i) {
+    double cos_sim = sims[i];
     if (cos_sim >= kReviewSemanticThreshold) {
-      hits.push_back({id, cos_sim});
+      hits.push_back({ids[i], cos_sim});
     }
   }
   if (hits.empty()) {
