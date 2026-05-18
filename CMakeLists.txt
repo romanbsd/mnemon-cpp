@@ -78,13 +78,13 @@ FetchContent_MakeAvailable(json)
 
 FetchContent_Declare(httplib
   GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-  GIT_TAG v0.44.0
+  GIT_TAG v0.45.0
 )
 FetchContent_MakeAvailable(httplib)
 
 FetchContent_Declare(Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG v3.14.0
+  GIT_TAG v3.15.0
 )
 FetchContent_MakeAvailable(Catch2)
 
