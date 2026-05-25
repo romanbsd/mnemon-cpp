@@ -36,11 +36,14 @@ namespace fs = std::filesystem;
 static std::string g_data_dir;
 static std::string g_store_flag;
 static bool g_readonly = false;
+static std::string g_embed_model;
 
 #ifndef MNEMON_VERSION_STR
 #define MNEMON_VERSION_STR "dev"
 #endif
 static const char* kVersion = MNEMON_VERSION_STR;
+
+static std::string resolve_embed_model() { return g_embed_model; }
 
 static void print_json(const nlohmann::json& j) { std::cout << j.dump(2) << '\n'; }
 
@@ -202,6 +205,7 @@ int run_mnemon(int argc, char** argv) {
   app.add_option("--data-dir", g_data_dir, "base data directory (env: MNEMON_DATA_DIR)");
   app.add_option("--store", g_store_flag, "named memory store (overrides MNEMON_STORE and active file)");
   app.add_flag("--readonly", g_readonly, "open database in read-only mode");
+  app.add_option("--embed-model", g_embed_model, "Ollama embedding model (env: MNEMON_EMBED_MODEL; default: nomic-embed-text)");
 
   auto trunc8 = [](const std::string& id) { return id.size() > 8 ? id.substr(0, 8) : id; };
 
@@ -266,7 +270,7 @@ int run_mnemon(int argc, char** argv) {
     }
 
     auto db = open_db();
-    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env();
+    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
     std::vector<double> embed_vec;
     std::vector<uint8_t> embed_blob;
     if (oc.available()) {
@@ -474,7 +478,7 @@ int run_mnemon(int argc, char** argv) {
       ov = *p;
     }
     std::vector<double> qvec;
-    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env();
+    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
     if (oc.available()) {
       try {
         qvec = oc.embed(rec_query);
@@ -713,7 +717,7 @@ int run_mnemon(int argc, char** argv) {
   embed->add_flag("--status", emb_status);
   embed->callback([&] {
     auto db = open_db();
-    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env();
+    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
     if (emb_status) {
       auto [tot, emb] = db->embedding_stats();
       int pct = tot > 0 ? static_cast<int>(std::lround(100.0 * static_cast<double>(emb) / static_cast<double>(tot))) : 0;

@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=cd943852142015d713db1afd86f0459b4cee6425
-last_sha_subject=feat: add privacy-safe memory receipts
-last_sha_date=2026-05-24T01:15:20+08:00
+last_sha=f443aef4cd1fa1f160c25c369d5e8c2330b80a37
+last_sha_subject=docs(release): prepare v0.1.8 notes
+last_sha_date=2026-05-24T00:24:52Z

@@ -961,7 +961,19 @@ if [ "$CONSEC_BLANKS" = "0" ]; then pass "no triple newlines" "(absent: consecut
 assert_contains "preserved header" "$EJECT_MD2" "Header"
 assert_contains "preserved content" "$EJECT_MD2" "Content after"
 
-banner "Milestone 12: Privacy-Safe Memory Receipts"
+banner "Milestone 12: --embed-model Flag"
+EMBEDMODEL_DIR="$TESTDATA/embed_model"
+mkdir -p "$EMBEDMODEL_DIR"
+
+step "--embed-model flag is accepted (no error)"
+OUT=$($M --data-dir "$EMBEDMODEL_DIR" --embed-model nomic-embed-text embed --status 2>&1)
+assert_contains "embed-model flag accepted" "$OUT" "ollama_available"
+
+step "--embed-model overrides MNEMON_EMBED_MODEL env var"
+OUT=$(MNEMON_EMBED_MODEL="env-model" $M --data-dir "$EMBEDMODEL_DIR" --embed-model "flag-model" embed --status 2>&1)
+assert_contains "embed-model flag overrides env" "$OUT" "ollama_available"
+
+banner "Milestone 13: Privacy-Safe Memory Receipts"
 RECEIPT_DIR="$TESTDATA/receipt"
 mkdir -p "$RECEIPT_DIR"
 
