@@ -34,6 +34,10 @@ set(ASSET_DEPS
   "${ASSET_ROOT}/nanoclaw/SKILL.md"
   "${ASSET_ROOT}/nanoclaw/container-skill.md"
   "${ASSET_ROOT}/nanobot/SKILL.md"
+  "${ASSET_ROOT}/codex/SKILL.md"
+  "${ASSET_ROOT}/codex/prime.sh"
+  "${ASSET_ROOT}/codex/stop.sh"
+  "${ASSET_ROOT}/codex/user_prompt.sh"
 )
 add_custom_command(
   OUTPUT ${EMBED_GEN_HPP} ${EMBED_GEN_CPP}
