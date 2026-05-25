@@ -42,6 +42,9 @@ ensure_upstream_remote() {
   fi
 }
 
+# Upstream SHA→tag map built during fetch_upstream (avoids per-commit ls-remote calls).
+_UPSTREAM_TAG_MAP=""
+
 # Resolve the upstream branch to use. Override via MNEMON_UPSTREAM_BRANCH;
 # otherwise auto-detect from upstream/HEAD (which `git remote set-head --auto`
 # populates after a fetch). Fails clearly if neither is available.
@@ -71,7 +74,9 @@ unshallow_if_needed() {
 fetch_upstream() {
   ensure_upstream_remote
   unshallow_if_needed
-  git -C "$REPO_ROOT" fetch upstream --tags --quiet
+  git -C "$REPO_ROOT" fetch upstream --quiet
+  # Build SHA→tag map without --tags (which would clobber locally-mirrored port tags).
+  _UPSTREAM_TAG_MAP=$(git -C "$REPO_ROOT" ls-remote upstream 'refs/tags/*' 2>/dev/null || true)
 }
 
 cmd_init() {
@@ -161,7 +166,7 @@ emit_commit_json() {
   subject=$(git -C "$REPO_ROOT" log -1 --format=%s "$sha")
   files=$(git -C "$REPO_ROOT" diff-tree --no-commit-id --name-only -r "$sha")
   class=$(classify_paths "$files")
-  tag=$(git -C "$REPO_ROOT" tag --points-at "$sha" | head -n1)
+  tag=$(printf '%s' "$_UPSTREAM_TAG_MAP" | awk -v s="$sha" 'BEGIN{FS="\t"} $1==s{sub("refs/tags/","", $2); sub(/\^\{\}$/,"", $2); if($2!="") {print $2; exit}}')
 
   jq -n \
     --arg sha "$sha" \
@@ -213,6 +218,12 @@ is_doc_meta() {
   case "$f" in
     *.md|LICENSE|.gitignore|Makefile|go.mod|go.sum) return 0 ;;
     .github/workflows/*.yml) return 0 ;;
+    # Harness runtime files and docs (not part of the binary contract)
+    harness/*|docs/*) return 0 ;;
+    # Goreleaser, changelogs, gitignore additions (no binary impact)
+    .goreleaser.yml|CHANGELOG.md|*.goreleaser.*) return 0 ;;
+    # Codex eval and validation scripts (not part of mnemon binary)
+    scripts/codex_app_server_eval.py|scripts/validate_harness*.sh) return 0 ;;
     *) return 1 ;;
   esac
 }
