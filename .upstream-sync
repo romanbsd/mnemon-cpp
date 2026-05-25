@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=d956a6d7c83651eecb2d7bab0338652f3b46cf6a
-last_sha_subject=feat(entity): add configurable entity extraction mode
-last_sha_date=2026-05-16T12:49:39Z
+last_sha=d70697af6b85e0310a0e89b4a3032bfb551bf05a
+last_sha_subject=fix: raise cosine dedup threshold to prevent same-domain false UPDATE
+last_sha_date=2026-05-17T09:57:59Z

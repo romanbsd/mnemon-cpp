@@ -124,7 +124,16 @@ target_link_libraries(mnemon PRIVATE CLI11::CLI11 nlohmann_json::nlohmann_json s
 option(BUILD_TESTING "Build unit tests" ON)
 if(BUILD_TESTING)
   enable_testing()
-  add_executable(cpp_tests tests/smoke_test.cpp)
+  add_executable(cpp_tests
+    tests/smoke_test.cpp
+    src/diff.cpp
+    src/tokenize.cpp
+    src/keyword.cpp
+    src/vector_math.cpp
+    src/model.cpp
+    src/uuid.cpp
+  )
+  target_include_directories(cpp_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
   target_link_libraries(cpp_tests PRIVATE Catch2::Catch2WithMain)
   add_test(NAME cpp_smoke COMMAND cpp_tests)
 endif()
