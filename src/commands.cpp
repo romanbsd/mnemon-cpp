@@ -161,6 +161,7 @@ int run_mnemon(int argc, char** argv) {
   std::string rem_tags;
   std::string rem_source = "user";
   std::string rem_entities;
+  std::string rem_entity_mode = "merge";
   bool rem_no_diff = false;
   remember->add_option("content", rem_parts, "insight text")->required()->expected(-1);
   remember->add_option("--cat", rem_cat, "category");
@@ -168,6 +169,7 @@ int run_mnemon(int argc, char** argv) {
   remember->add_option("--tags", rem_tags, "comma-separated tags");
   remember->add_option("--source", rem_source, "source");
   remember->add_option("--entities", rem_entities, "comma-separated entities");
+  remember->add_option("--entity-mode", rem_entity_mode, "entity extraction mode: merge, provided, auto");
   remember->add_flag("--no-diff", rem_no_diff);
   remember->callback([&] {
     std::string rem_content;
@@ -206,6 +208,9 @@ int run_mnemon(int argc, char** argv) {
       if (e.size() > 200) {
         throw CLI::ValidationError("entity too long (" + std::to_string(e.size()) + " chars, max 200): " + e.substr(0, 50));
       }
+    }
+    if (!mnemon::graph_eng::valid_entity_mode(rem_entity_mode)) {
+      throw std::runtime_error("invalid entity mode \"" + rem_entity_mode + "\"; valid: merge, provided, auto");
     }
 
     auto db = open_db();
@@ -306,7 +311,7 @@ int run_mnemon(int argc, char** argv) {
           embedded = true;
           embed_cache[insight.id] = embed_vec;
         }
-        estats = mnemon::graph_eng::on_insight_created(*db, insight, ec_ptr);
+        estats = mnemon::graph_eng::on_insight_created(*db, insight, ec_ptr, rem_entity_mode);
         if (!insight.entities.empty()) {
           db->update_entities(insight.id, insight.entities);
         }
