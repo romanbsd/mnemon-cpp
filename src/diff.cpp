@@ -11,28 +11,38 @@
 
 namespace mnemon::search_engine {
 
-// Phrases that flip “similar text” into a semantic conflict (English + Chinese), aligned with Go diff heuristics.
-static const char* kNeg[] = {"not",           "no longer",     "don't",     "doesn't",    "never",
-                             "switched from", "instead of",    "rather than", "replaced", "deprecated",
-                             "不",            "没有",          "不再",      "放弃",       "替换",
-                             "取消"};
+// Clear state-change signals. Single common words like "not" are excluded —
+// they appear constantly in scientific/research text and cause false CONFLICT.
+static const char* kNeg[] = {
+    "no longer", "don't", "doesn't", "never", "switched from",
+    "instead of", "rather than", "replaced", "deprecated",
+    "\xe4\xb8\x8d\xe5\x86\x8d",  // 不再
+    "\xe6\x94\xbe\xe5\xbc\x83",  // 放弃
+    "\xe6\x9b\xbf\xe6\x8d\xa2",  // 替换
+    "\xe5\x8f\x96\xe6\xb6\x88",  // 取消
+};
 
 // Thresholds: low sim → ADD; negation → CONFLICT; very high → DUPLICATE; else UPDATE.
 static DiffSuggestion classify_suggestion(double similarity, std::string_view new_text, std::string_view old_text) {
   if (similarity < 0.5) {
     return DiffSuggestion::Add;
   }
-  std::string nl(new_text);
-  std::string ol(old_text);
-  for (auto& c : nl) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  for (auto& c : ol) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  for (const char* neg : kNeg) {
-    if (nl.find(neg) != std::string::npos || ol.find(neg) != std::string::npos) {
-      return DiffSuggestion::Conflict;
+  // Only check conflict signals when texts are substantially similar.
+  // At borderline similarity (0.5–0.7) texts may share domain vocabulary
+  // without being about the same subject.
+  if (similarity >= 0.7) {
+    std::string nl(new_text);
+    std::string ol(old_text);
+    for (auto& c : nl) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    for (auto& c : ol) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    for (const char* neg : kNeg) {
+      if (nl.find(neg) != std::string::npos || ol.find(neg) != std::string::npos) {
+        return DiffSuggestion::Conflict;
+      }
     }
   }
   if (similarity > 0.9) {
