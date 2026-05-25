@@ -9,6 +9,7 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -19,10 +20,14 @@
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 
 namespace fs = std::filesystem;
 
 namespace mnemon {
+
+static constexpr int kTransactionBeginAttempts = 5;
+static constexpr int kOplogTrimInterval = 100;
 
 // Read-only mounts (e.g. chmod -R a-w): WAL mode would open/create -wal/-shm next to the DB; that requires
 // write access. Open via URI with immutable=1 so SQLite uses only the main db file (parity with Go OpenReadOnly
@@ -170,6 +175,25 @@ void Database::exec_sql(const char* sql) {
     std::string m = err ? err : "exec";
     sqlite3_free(err);
     throw std::runtime_error(m);
+  }
+}
+
+static void exec_begin_immediate_with_retry(sqlite3* db) {
+  for (int attempt = 0; attempt < kTransactionBeginAttempts; ++attempt) {
+    char* err = nullptr;
+    int rc = sqlite3_exec(db, "BEGIN IMMEDIATE;", nullptr, nullptr, &err);
+    if (rc == SQLITE_OK) {
+      return;
+    }
+    std::string msg = err ? err : sqlite3_errmsg(db);
+    sqlite3_free(err);
+    if (rc != SQLITE_BUSY && rc != SQLITE_LOCKED) {
+      throw std::runtime_error(msg);
+    }
+    if (attempt + 1 == kTransactionBeginAttempts) {
+      throw std::runtime_error("begin transaction: " + msg);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25 * (attempt + 1)));
   }
 }
 
@@ -335,7 +359,7 @@ CREATE INDEX IF NOT EXISTS idx_oplog_created ON oplog(created_at);
 // Re-entrant depth counter: nested callers share one BEGIN/COMMIT pair.
 void Database::in_transaction(std::function<void()> fn) {
   if (tx_depth_ == 0) {
-    exec_sql("BEGIN IMMEDIATE;");
+    exec_begin_immediate_with_retry(db_);
   }
   ++tx_depth_;
   try {
@@ -1008,7 +1032,7 @@ void Database::delete_edges_by_node(const std::string& node_id) {
   st.step();
 }
 
-// Audit trail; trimmed to kMaxOplogEntries. Read-only and failures are best-effort (stderr only).
+// Audit trail; trimmed lazily to kMaxOplogEntries. Read-only and failures are best-effort (stderr only).
 void Database::log_op(const std::string& operation, const std::string& insight_id, const std::string& detail) {
   if (readonly_) {
     return;
@@ -1024,9 +1048,12 @@ void Database::log_op(const std::string& operation, const std::string& insight_i
     st.bind_text(3, detail);
     st.bind_text(4, time_util::rfc3339_utc(time_util::now_utc()));
     st.step();
-    Statement tr(db_, "DELETE FROM oplog WHERE id <= (SELECT MAX(id) FROM oplog) - ?");
-    tr.bind_int(1, kMaxOplogEntries);
-    tr.step();
+    const auto inserted_id = sqlite3_last_insert_rowid(db_);
+    if (inserted_id > kMaxOplogEntries && inserted_id % kOplogTrimInterval == 0) {
+      Statement tr(db_, "DELETE FROM oplog WHERE id <= (SELECT MAX(id) FROM oplog) - ?");
+      tr.bind_int(1, kMaxOplogEntries);
+      tr.step();
+    }
   } catch (const std::exception& ex) {
     std::cerr << "warning: oplog: " << ex.what() << "\n";
   }

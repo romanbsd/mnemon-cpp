@@ -43,7 +43,7 @@ static double token_overlap_sets(const search_engine::TokenSet& a, const search_
     big = &a;
   }
   int inter = 0;
-  for (const auto& [k, _] : *small) {
+  for (const auto& k : *small) {
     if (big->count(k)) {
       inter++;
     }

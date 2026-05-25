@@ -8,13 +8,13 @@ namespace mnemon::search_engine {
 TokenSet insight_tokens(const Insight& ins) {
   TokenSet tokens = tokenize(ins.content);
   for (const auto& tag : ins.tags) {
-    for (const auto& [k, _] : tokenize(tag)) {
-      tokens[k] = true;
+    for (const auto& k : tokenize(tag)) {
+      tokens.insert(k);
     }
   }
   for (const auto& ent : ins.entities) {
-    for (const auto& [k, _] : tokenize(ent)) {
-      tokens[k] = true;
+    for (const auto& k : tokenize(ent)) {
+      tokens.insert(k);
     }
   }
   return tokens;
@@ -35,7 +35,7 @@ std::vector<ScoredInsight> keyword_search_cached(const std::vector<Insight>& ins
       (*token_cache)[ins.id] = content_tokens;
     }
     int inter = 0;
-    for (const auto& [t, _] : query_tokens) {
+    for (const auto& t : query_tokens) {
       if (content_tokens.count(t)) {
         inter++;
       }
