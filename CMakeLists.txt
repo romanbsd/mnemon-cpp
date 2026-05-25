@@ -33,6 +33,7 @@ set(ASSET_DEPS
   "${ASSET_ROOT}/openclaw/plugin/index.js"
   "${ASSET_ROOT}/nanoclaw/SKILL.md"
   "${ASSET_ROOT}/nanoclaw/container-skill.md"
+  "${ASSET_ROOT}/nanobot/SKILL.md"
 )
 add_custom_command(
   OUTPUT ${EMBED_GEN_HPP} ${EMBED_GEN_CPP}
