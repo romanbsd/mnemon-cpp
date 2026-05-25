@@ -228,20 +228,19 @@ step "MNEMON_STORE env — overrides active file"
 OUT=$(MNEMON_STORE=default $M --data-dir "$STORE_DIR" status)
 assert_contains "env override db path" "$OUT" "data/default/mnemon.db"
 
-step "migration — moves legacy DB to data/default/"
+step "migration — moves legacy DB + WAL/SHM sidecars to data/default/"
 MIGRATE_DIR="$TESTDATA/migrate_test"
-mkdir -p "$MIGRATE_DIR"
-# Create legacy-layout DB
-$M --data-dir "$MIGRATE_DIR" remember --no-diff "legacy insight" --cat fact --imp 3 > /dev/null 2>&1 || true
-# Force migration by removing data dir if it was auto-created
-if [ -d "$MIGRATE_DIR/data" ]; then
-  # The openDB already created data layout — test is moot, skip
-  pass "migration" "(auto-migrated by openDB)"
-else
-  # Legacy mnemon.db should exist
-  OUT=$($M --data-dir "$MIGRATE_DIR" status)
-  assert_contains "migrated db path" "$OUT" "data/default/mnemon.db"
-fi
+rm -rf "$MIGRATE_DIR" && mkdir -p "$MIGRATE_DIR"
+# Create a valid legacy-layout SQLite DB and fake sidecar files
+sqlite3 "$MIGRATE_DIR/mnemon.db" "CREATE TABLE IF NOT EXISTS insights (id TEXT PRIMARY KEY);"
+printf 'fake-wal' > "$MIGRATE_DIR/mnemon.db-wal"
+printf 'fake-shm' > "$MIGRATE_DIR/mnemon.db-shm"
+# Trigger migration (any command that calls open_db); SQLite may clean up WAL on close
+$M --data-dir "$MIGRATE_DIR" status > /dev/null 2>&1 || true
+assert_contains "db migrated" "$(ls "$MIGRATE_DIR/data/default/" 2>/dev/null)" "mnemon.db"
+# WAL/SHM should no longer be at the root after migration (moved or cleaned up by SQLite)
+if [ -f "$MIGRATE_DIR/mnemon.db-wal" ]; then fail "legacy wal gone" "(should not remain at root)"; else pass "legacy wal gone" "(absent from root)"; fi
+if [ -f "$MIGRATE_DIR/mnemon.db-shm" ]; then fail "legacy shm gone" "(should not remain at root)"; else pass "legacy shm gone" "(absent from root)"; fi
 
 # ══════════════════════════════════════════════════════════════════════
 banner "Milestone 1: Basic CRUD"
