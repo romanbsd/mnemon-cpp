@@ -69,6 +69,37 @@ TEST_CASE("diff: jaccard used in dedup — same-domain different-fact produces A
   REQUIRE(res.suggestion == DiffSuggestion::Add);
 }
 
+// --- negation words / conflict gate ---
+
+TEST_CASE("diff: 'not' in scientific text does not trigger CONFLICT") {
+  // Regression: bare "not" removed from negation list — it appears constantly in scientific text.
+  Insight base;
+  base.id      = "prev";
+  base.content = "Species not previously recorded in this region";
+
+  auto res = diff_insights(
+      {base},
+      "Species not previously recorded in Pahang.",
+      DiffOptions{});
+
+  // Must be ADD or UPDATE, not CONFLICT
+  REQUIRE(res.suggestion != DiffSuggestion::Conflict);
+}
+
+TEST_CASE("diff: 'no longer' still triggers CONFLICT at high similarity") {
+  Insight base;
+  base.id      = "prev";
+  base.content = "Uses Redis for caching";
+
+  auto res = diff_insights(
+      {base},
+      "No longer uses Redis for caching",
+      DiffOptions{});
+
+  // "no longer" is a genuine state-change signal at high Jaccard similarity
+  REQUIRE(res.suggestion == DiffSuggestion::Conflict);
+}
+
 // placeholder to keep the binary alive before any other tests are added
 TEST_CASE("placeholder") { REQUIRE(true); }
 
