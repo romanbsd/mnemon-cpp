@@ -97,5 +97,33 @@ TEST_CASE("diff: 'no longer' still triggers CONFLICT at high similarity") {
   REQUIRE(res.suggestion == DiffSuggestion::Conflict);
 }
 
+// --- sort matches by similarity ---
+
+TEST_CASE("diff: sort by similarity — UPDATE not masked by lower-Jaccard ADD candidate") {
+  // insA: high importance so keyword_search returns it first.
+  //   keyword_score = 3/3 = 1.0 (all query tokens present),
+  //   but 5 extra tokens → Jaccard = 3/8 = 0.375 → ADD.
+  // insB: lower importance (keyword_search returns second),
+  //   Jaccard(query, insB) = 3/4 = 0.75 → UPDATE.
+  // Without sort: matches[0] = insA (ADD) → overall = ADD (wrong).
+  // With sort by similarity: matches[0] = insB (UPDATE, sim=0.75) → overall = UPDATE.
+  Insight insA;
+  insA.id         = "a";
+  insA.content    = "Redis caching performance reliability scalability durability availability consistency";
+  insA.importance = 5;
+
+  Insight insB;
+  insB.id         = "b";
+  insB.content    = "Redis caching performance solution";
+  insB.importance = 1;
+
+  auto res = diff_insights(
+      {insA, insB},
+      "Redis caching performance",
+      DiffOptions{});
+
+  REQUIRE(res.suggestion == DiffSuggestion::Update);
+}
+
 // placeholder to keep the binary alive before any other tests are added
 TEST_CASE("placeholder") { REQUIRE(true); }

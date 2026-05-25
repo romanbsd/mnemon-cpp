@@ -140,7 +140,14 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
     }
   }
 
-  // Overall suggestion: any DUPLICATE among candidates wins (stop remember-as-new).
+  // Sort by similarity descending so matches[0] is always the strongest candidate.
+  // keyword_search orders by token overlap score, which can differ from the final
+  // Jaccard-based similarity — a high-keyword-score ADD would otherwise mask a
+  // lower-keyword-score UPDATE or DUPLICATE from a more similar candidate.
+  std::sort(matches.begin(), matches.end(),
+            [](const DiffMatch& a, const DiffMatch& b) { return a.similarity > b.similarity; });
+
+  // Overall suggestion: take the strongest match; any DUPLICATE wins.
   DiffSuggestion overall = DiffSuggestion::Add;
   if (!matches.empty()) {
     overall = matches[0].suggestion;

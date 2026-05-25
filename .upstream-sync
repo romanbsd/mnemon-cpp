@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=da43bfabbde30a35ea39efc90a0208cb10d1e6a4
-last_sha_subject=fix: remove 'not' from negation words, gate conflict check at similarity>=0.7
-last_sha_date=2026-05-17T09:58:00Z
+last_sha=439ca22ac8a1c8a382dbe54c2be11ea240d4beb0
+last_sha_subject=fix: sort diff matches by similarity
+last_sha_date=2026-05-18T00:14:43+08:00
