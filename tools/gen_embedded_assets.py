@@ -19,6 +19,7 @@ ASSET_FILES = [
     "openclaw/plugin/index.js",
     "nanoclaw/SKILL.md",
     "nanoclaw/container-skill.md",
+    "nanobot/SKILL.md",
 ]
 
 

@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=439ca22ac8a1c8a382dbe54c2be11ea240d4beb0
-last_sha_subject=fix: sort diff matches by similarity
-last_sha_date=2026-05-18T00:14:43+08:00
+last_sha=1e11a0dae9c079e8e9d7ef564e907633ffaac5e4
+last_sha_subject=feat: Add Nanobot support
+last_sha_date=2026-05-17T23:48:11Z

@@ -883,6 +883,24 @@ OUT=$($M --data-dir "$VALDIR" gc --threshold -0.1 2>&1 || true)
 assert_contains "gc threshold negative rejected" "$OUT" "must be non-negative"
 
 # ══════════════════════════════════════════════════════════════════════
+banner "Setup: Nanobot target validation"
+# ══════════════════════════════════════════════════════════════════════
+
+SETUPDIR="$TESTDATA/setup_nanobot"
+mkdir -p "$SETUPDIR"
+
+step "setup --target nanobot --yes — accepted (installs skill)"
+OUT=$($M --data-dir "$SETUPDIR" setup --target nanobot --yes 2>&1 || true)
+assert_contains "nanobot target accepted" "$OUT" "Skill"
+
+step "setup --target bogus — still rejected"
+OUT=$($M --data-dir "$SETUPDIR" setup --target bogus 2>&1 || true)
+assert_contains "bogus target rejected" "$OUT" "invalid target"
+
+step "setup --target bogus error mentions nanobot"
+assert_contains "error mentions nanobot" "$OUT" "nanobot"
+
+# ══════════════════════════════════════════════════════════════════════
 banner "Setup eject: markdown cleanup"
 # ══════════════════════════════════════════════════════════════════════
 

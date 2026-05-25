@@ -498,8 +498,33 @@ static Environment detect_openclaw(bool global) {
   return env;
 }
 
+static Environment detect_nanobot(bool global) {
+  Environment env;
+  env.name = "nanobot";
+  env.display = "Nanobot";
+  fs::path global_dir = fs::path(home_dir()) / ".nanobot" / "workspace";
+  std::string local_dir = ".nanobot";
+  env.config_dir = global ? global_dir.string() : local_dir;
+
+  std::string bin;
+  if (look_path("nanobot", bin)) {
+    env.detected = true;
+    env.bin_path = bin;
+    env.version = exec_version(bin);
+  }
+  std::error_code ec;
+  if (fs::exists(global_dir, ec)) {
+    env.detected = true;
+  }
+  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
+  if (fs::exists(skill, ec)) {
+    env.installed = true;
+  }
+  return env;
+}
+
 static std::vector<Environment> detect_environments(bool global) {
-  return {detect_claude(global), detect_openclaw(global)};
+  return {detect_claude(global), detect_openclaw(global), detect_nanobot(global)};
 }
 
 // --- install pieces ---
@@ -836,6 +861,70 @@ static int openclaw_eject(const std::string& config_dir, bool yes) {
   return errs;
 }
 
+// --- nanobot ---
+
+static fs::path nanobot_write_skill(const std::string& config_dir) {
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  fs::create_directories(skill_dir);
+  fs::path p = skill_dir / "SKILL.md";
+  write_bytes(p, mnemon::embedded::nanobot_SKILL_md(), 0644);
+  return p;
+}
+
+static int nanobot_eject(const std::string& config_dir) {
+  int errs = 0;
+  std::cout << "\nRemoving Nanobot integration (" << config_dir << ")...\n";
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  std::error_code ec;
+  fs::remove_all(skill_dir, ec);
+  if (ec) {
+    status_error("Skill", "remove failed: " + ec.message());
+    ++errs;
+  } else {
+    status_ok("Skill", skill_dir.string() + " removed");
+  }
+  remove_if_empty_dir((fs::path(config_dir) / "skills").string());
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
+static bool install_nanobot(Environment env, bool global, bool setup_yes) {
+  std::string config_dir = env.config_dir;
+  if (!global && !setup_yes && is_tty_in()) {
+    std::string local_dir = ".nanobot";
+    std::string global_dir = (fs::path(home_dir()) / ".nanobot" / "workspace").string();
+    size_t idx = select_one("Install scope", {
+        "Global -- all projects (" + global_dir + "/)",
+        "Local  -- this project only (" + local_dir + "/)",
+    }, 0);
+    config_dir = (idx == 1) ? local_dir : global_dir;
+  }
+  std::cout << "\nSetting up Nanobot (" << config_dir << ")...\n";
+  std::cout << "\n[1/2] Skill\n";
+  try {
+    auto p = nanobot_write_skill(config_dir);
+    status_ok("Skill", p.string());
+  } catch (const std::exception& e) {
+    status_error("Skill", e.what());
+    return false;
+  }
+  std::cout << "\n[2/2] Prompts\n";
+  try {
+    auto p = write_prompt_files();
+    status_ok("Prompts", p.string());
+  } catch (const std::exception& e) {
+    status_error("Prompts", e.what());
+    return false;
+  }
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Prompts ~/.mnemon/prompt/ (guide.md, skill.md)\n";
+  std::cout << "\nRestart Nanobot to activate the mnemon skill.\n";
+  std::cout << "Edit ~/.mnemon/prompt/guide.md to customize behavior.\n";
+  std::cout << "Run 'mnemon setup --eject' to remove.\n";
+  return true;
+}
+
 // --- install flows ---
 
 static HookSelection select_optional_hooks(bool setup_yes) {
@@ -1032,6 +1121,9 @@ static bool install_env(Environment* env, bool global, bool setup_yes, const Run
   if (env->name == "openclaw") {
     return install_openclaw(*env, global, setup_yes, opt);
   }
+  if (env->name == "nanobot") {
+    return install_nanobot(*env, global, setup_yes);
+  }
   return false;
 }
 
@@ -1041,6 +1133,9 @@ static int eject_env(Environment* env, bool yes) {
   }
   if (env->name == "openclaw") {
     return openclaw_eject(env->config_dir, yes);
+  }
+  if (env->name == "nanobot") {
+    return nanobot_eject(env->config_dir);
   }
   return 0;
 }
@@ -1069,7 +1164,7 @@ static void run_install_flow(const RunOptions& opt) {
   }
   if (detected.empty()) {
     std::cout << "\nNo supported LLM CLI environments detected.\n";
-    std::cout << "Install Claude Code or OpenClaw, then run 'mnemon setup' again.\n";
+    std::cout << "Install Claude Code, OpenClaw, or Nanobot, then run 'mnemon setup' again.\n";
     return;
   }
 
@@ -1165,8 +1260,8 @@ static void run_eject_flow(const RunOptions& opt) {
 } // namespace
 
 void run(const RunOptions& opt) {
-  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "openclaw") {
-    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code or openclaw)");
+  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "openclaw" && opt.target != "nanobot") {
+    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, openclaw, or nanobot)");
   }
   if (opt.eject) {
     run_eject_flow(opt);
