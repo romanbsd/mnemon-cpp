@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=0eed24c3043b833a112635c18eece8f97fac0939
-last_sha_subject=fix(cmd): reject invalid query limits
-last_sha_date=2026-05-15T03:55:27Z
+last_sha=384ef4c40c5ab6368879a18c023540d9e7811256
+last_sha_subject=fix(store): report sidecar migration failures
+last_sha_date=2026-05-15T03:56:12Z

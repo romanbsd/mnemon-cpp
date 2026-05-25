@@ -103,6 +103,15 @@ bool store_exists(const std::string& base, const std::string& name) {
   return fs::is_directory(store_dir(base, name), ec);
 }
 
+static bool rename_if_exists(const fs::path& old_path, const fs::path& new_path) {
+  std::error_code ec;
+  if (!fs::exists(old_path, ec)) {
+    return !ec;
+  }
+  fs::rename(old_path, new_path, ec);
+  return !ec;
+}
+
 // Legacy layout: single ~/.mnemon/mnemon.db → ~/.mnemon/data/default/mnemon.db (+ WAL sidecars).
 // Skip when readonly so we never mutate disk from a read-only open.
 bool migrate_if_needed(const std::string& base, bool readonly_mode) {
@@ -129,11 +138,11 @@ bool migrate_if_needed(const std::string& base, bool readonly_mode) {
   }
   fs::path old_wal = fs::path(base) / "mnemon.db-wal";
   fs::path old_shm = fs::path(base) / "mnemon.db-shm";
-  if (fs::exists(old_wal, ec)) {
-    fs::rename(old_wal, fs::path(new_db.string() + "-wal"), ec);
+  if (!rename_if_exists(old_wal, fs::path(new_db.string() + "-wal"))) {
+    return false;
   }
-  if (fs::exists(old_shm, ec)) {
-    fs::rename(old_shm, fs::path(new_db.string() + "-shm"), ec);
+  if (!rename_if_exists(old_shm, fs::path(new_db.string() + "-shm"))) {
+    return false;
   }
   std::cerr << "mnemon: migrated database to " << new_db.string() << "\n";
   return true;
