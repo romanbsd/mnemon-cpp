@@ -9,7 +9,7 @@
 
 namespace mnemon {
 
-float cosine_similarity(const std::vector<float>& a, const std::vector<float>& b) {
+float cosine_similarity(std::span<const float> a, std::span<const float> b) {
   if (a.size() != b.size() || a.empty()) {
     return 0;
   }
@@ -34,8 +34,8 @@ float cosine_similarity(const std::vector<float>& a, const std::vector<float>& b
   return dot / (std::sqrt(na) * std::sqrt(nb));
 }
 
-std::vector<float> cosine_similarity_many(const std::vector<float>& query,
-                                          const std::vector<const std::vector<float>*>& vectors) {
+std::vector<float> cosine_similarity_many(std::span<const float> query,
+                                          const std::vector<std::span<const float>>& vectors) {
   std::vector<float> out(vectors.size(), 0.0f);
   if (query.empty() || vectors.empty()) {
     return out;
@@ -51,14 +51,14 @@ std::vector<float> cosine_similarity_many(const std::vector<float>& query,
   const float query_norm = std::sqrt(query_sq);
 
   for (size_t i = 0; i < vectors.size(); ++i) {
-    const auto* v = vectors[i];
-    if (!v || v->size() != query.size()) {
+    const auto v = vectors[i];
+    if (v.empty() || v.size() != query.size()) {
       continue;
     }
     float dot = 0;
     float row_sq = 0;
-    vDSP_dotpr(query.data(), 1, v->data(), 1, &dot, n);
-    vDSP_dotpr(v->data(), 1, v->data(), 1, &row_sq, n);
+    vDSP_dotpr(query.data(), 1, v.data(), 1, &dot, n);
+    vDSP_dotpr(v.data(), 1, v.data(), 1, &row_sq, n);
     if (row_sq == 0) {
       continue;
     }
@@ -67,17 +67,17 @@ std::vector<float> cosine_similarity_many(const std::vector<float>& query,
   return out;
 #else
   for (size_t i = 0; i < vectors.size(); ++i) {
-    const auto* v = vectors[i];
-    if (!v) {
+    const auto v = vectors[i];
+    if (v.empty()) {
       continue;
     }
-    out[i] = cosine_similarity(query, *v);
+    out[i] = cosine_similarity(query, v);
   }
   return out;
 #endif
 }
 
-std::vector<uint8_t> serialize_vector(const std::vector<float>& v) {
+std::vector<uint8_t> serialize_vector(std::span<const float> v) {
   if (v.empty()) return {};
 
   std::vector<uint8_t> out(v.size() * sizeof(double));

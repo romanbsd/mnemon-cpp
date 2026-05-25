@@ -76,18 +76,18 @@ struct Anchor {
 };
 
 std::vector<VecHit> vector_search_from_cache(const std::unordered_map<std::string, std::vector<float>>& cache,
-                                             const std::vector<float>& query_vec, int limit) {
+                                             std::span<const float> query_vec, int limit) {
   if (query_vec.empty() || limit <= 0) {
     return {};
   }
   std::vector<VecHit> hits;
   std::vector<std::string> ids;
-  std::vector<const std::vector<float>*> vec_refs;
+  std::vector<std::span<const float>> vec_refs;
   ids.reserve(cache.size());
   vec_refs.reserve(cache.size());
   for (const auto& [id, vec] : cache) {
     ids.push_back(id);
-    vec_refs.push_back(&vec);
+    vec_refs.push_back(vec);
   }
 
   auto sims = mnemon::cosine_similarity_many(query_vec, vec_refs);
@@ -107,7 +107,7 @@ std::vector<VecHit> vector_search_from_cache(const std::unordered_map<std::strin
 
 // Layered beam: expand neighbors by structural edge weight + optional cosine to query; keep top `beam` per depth.
 void beam_search_from_anchor(Database& db, const std::string& start_id, double start_score,
-                             const std::vector<float>& query_vec, const IntentWeights& weights, const Trav& params,
+                             std::span<const float> query_vec, const IntentWeights& weights, const Trav& params,
                              std::unordered_map<std::string, double>& score_map,
                              std::unordered_map<std::string, std::string>& via_map,
                              std::unordered_map<std::string, Insight>& insight_map,
@@ -265,11 +265,10 @@ RecallResponse intent_aware_recall(Database& db, std::string_view query, const s
   std::unordered_map<std::string, std::vector<float>> embed_cache;
   bool has_embeddings = false;
   if (!query_vec.empty()) {
-    for (const auto& row : db.get_all_embeddings()) {
+    for (auto& row : db.get_all_embeddings()) {
       if (!row.embedding.empty()) {
-        auto v = row.embedding;
-        mnemon::normalize_vector(v);
-        embed_cache[row.id] = std::move(v);
+        mnemon::normalize_vector(row.embedding);
+        embed_cache[row.id] = std::move(row.embedding);
       }
     }
     has_embeddings = !embed_cache.empty();

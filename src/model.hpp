@@ -41,7 +41,6 @@ struct Edge {
 
 struct EmbeddedRow {
   std::string id;
-  std::string content;
   std::vector<float> embedding;
 };
 

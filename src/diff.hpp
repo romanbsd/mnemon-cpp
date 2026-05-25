@@ -2,6 +2,7 @@
 
 #include "model.hpp"
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -25,12 +26,12 @@ struct DiffResult {
 
 struct EmbeddedItem {
   std::string id;
-  const std::vector<float>* embedding{nullptr};
+  std::span<const float> embedding;
 };
 
 struct DiffOptions {
   int limit{5};
-  std::vector<float> new_embedding;
+  std::span<const float> new_embedding;
   std::vector<EmbeddedItem> existing_embed;
 };
 

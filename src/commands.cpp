@@ -293,7 +293,7 @@ int run_mnemon(int argc, char** argv) {
     if (!rem_no_diff) {
       std::vector<mnemon::search_engine::EmbeddedItem> eitems;
       for (const auto& [id, vec] : embed_cache) {
-        eitems.push_back({id, &vec});
+        eitems.push_back({id, vec});
       }
       mnemon::search_engine::DiffOptions dopts;
       dopts.limit = 5;
@@ -364,7 +364,7 @@ int run_mnemon(int argc, char** argv) {
         if (!embed_vec.empty()) {
           db->update_embedding(insight.id, embed_vec);
           embedded = true;
-          embed_cache[insight.id] = embed_vec;
+          embed_cache[insight.id] = std::move(embed_vec);
         }
         estats = mnemon::graph_eng::on_insight_created(*db, insight, ec_ptr, rem_entity_mode);
         if (!insight.entities.empty()) {

@@ -19,11 +19,10 @@ static constexpr int kMaxAutoSemanticEdges = 3;
 
 EmbedCache build_embed_cache(Database& db) {
   EmbedCache c;
-  for (const auto& row : db.get_all_embeddings()) {
+  for (auto& row : db.get_all_embeddings()) {
     if (!row.embedding.empty()) {
-      auto v = row.embedding;
-      mnemon::normalize_vector(v);
-      c[row.id] = std::move(v);
+      mnemon::normalize_vector(row.embedding);
+      c[row.id] = std::move(row.embedding);
     }
   }
   return c;
@@ -39,14 +38,14 @@ int create_semantic_edges(Database& db, Insight& insight, EmbedCache* cache) {
   if (it == cache->end() || it->second.empty()) {
     return 0;
   }
-  const auto& insight_vec = it->second;
+  const std::span<const float> insight_vec = it->second;
   struct Sc {
     std::string id;
     double sim;
   };
   std::vector<Sc> candidates;
   std::vector<std::string> ids;
-  std::vector<const std::vector<float>*> vec_refs;
+  std::vector<std::span<const float>> vec_refs;
   ids.reserve(cache->size());
   vec_refs.reserve(cache->size());
   for (const auto& [id, other_vec] : *cache) {
@@ -54,7 +53,7 @@ int create_semantic_edges(Database& db, Insight& insight, EmbedCache* cache) {
       continue;
     }
     ids.push_back(id);
-    vec_refs.push_back(&other_vec);
+    vec_refs.push_back(other_vec);
   }
   auto sims = mnemon::cosine_similarity_many(insight_vec, vec_refs);
   for (size_t i = 0; i < ids.size(); ++i) {
@@ -108,7 +107,7 @@ static std::vector<SemanticCandidate> find_by_embedding(Database& db, const Insi
   };
   std::vector<Sc> hits;
   std::vector<std::string> ids;
-  std::vector<const std::vector<float>*> vec_refs;
+  std::vector<std::span<const float>> vec_refs;
   ids.reserve(cache.size());
   vec_refs.reserve(cache.size());
   for (const auto& [id, vec] : cache) {
@@ -116,7 +115,7 @@ static std::vector<SemanticCandidate> find_by_embedding(Database& db, const Insi
       continue;
     }
     ids.push_back(id);
-    vec_refs.push_back(&vec);
+    vec_refs.push_back(vec);
   }
   auto sims = mnemon::cosine_similarity_many(it->second, vec_refs);
   for (size_t i = 0; i < ids.size(); ++i) {

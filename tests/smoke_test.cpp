@@ -27,7 +27,7 @@ TEST_CASE("diff: cosine 0.75 does not override token sim (same-domain different-
   DiffOptions opts;
   opts.limit        = 5;
   opts.new_embedding = new_vec;
-  opts.existing_embed.push_back({"kinabalu", &old_vec});
+  opts.existing_embed.push_back({"kinabalu", old_vec});
 
   auto res = diff_insights(
       {base},
@@ -163,7 +163,7 @@ TEST_CASE("cosine_similarity_many matches single cosine behavior") {
   const std::vector<float> b{3.0f, 2.0f, 1.0f};
   const std::vector<float> z{0.0f, 0.0f, 0.0f};
   const std::vector<float> bad{1.0f, 2.0f};
-  const std::vector<const std::vector<float>*> many{&a, &b, &z, &bad};
+  const std::vector<std::span<const float>> many{a, b, z, bad};
 
   const auto sims = mnemon::cosine_similarity_many(q, many);
   REQUIRE(sims.size() == many.size());
