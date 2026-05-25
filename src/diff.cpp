@@ -88,8 +88,9 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
       cosine_sim = cand_cos[idx];
     }
     double similarity = token_sim;
-    // Strong embedding agreement can override token Jaccard when text wording diverges.
-    if (cosine_sim >= 0.7 && cosine_sim > similarity) {
+    // Combined similarity: cosine only contributes when above 0.85.
+    // Below that, same-domain content clusters around 0.70–0.84 and produces false UPDATE.
+    if (cosine_sim >= 0.85 && cosine_sim > similarity) {
       similarity = cosine_sim;
     }
     auto sug = classify_suggestion(similarity, new_content, c.insight.content);
@@ -120,7 +121,7 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
     auto second_cos = mnemon::cosine_similarity_many(opts.new_embedding, second_vecs);
     for (size_t i = 0; i < second_ids.size(); ++i) {
       double cs = second_cos[i];
-      if (cs >= 0.7) {
+      if (cs >= 0.85) {
         top_cos.push_back({second_ids[i], cs});
       }
     }
@@ -139,7 +140,7 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
       }
       double token_sim = content_similarity(new_content, it->second.content);
       double similarity = token_sim;
-      if (cp.sim >= 0.7 && cp.sim > similarity) {
+      if (cp.sim >= 0.85 && cp.sim > similarity) {
         similarity = cp.sim;
       }
       auto sug = classify_suggestion(similarity, new_content, it->second.content);
