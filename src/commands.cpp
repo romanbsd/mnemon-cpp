@@ -55,6 +55,9 @@ static std::string resolve_store() {
 
 static std::unique_ptr<mnemon::Database> open_db() {
   std::string name = resolve_store();
+  if (!mnemon::paths::valid_store_name(name)) {
+    throw std::runtime_error("invalid store name \"" + name + "\"");
+  }
   std::string dir = mnemon::paths::store_dir(g_data_dir, name);
   if (g_readonly) {
     return mnemon::Database::open_readonly(dir);
@@ -773,6 +776,9 @@ int run_mnemon(int argc, char** argv) {
   std::string st_setname;
   st_set->add_option("name", st_setname)->required();
   st_set->callback([&] {
+    if (!mnemon::paths::valid_store_name(st_setname)) {
+      throw CLI::ValidationError("invalid store name \"" + st_setname + "\": must match [a-zA-Z0-9][a-zA-Z0-9_-]*");
+    }
     if (!mnemon::paths::store_exists(g_data_dir, st_setname)) {
       throw std::runtime_error("store \"" + st_setname + "\" does not exist (use 'mnemon store create " + st_setname +
                               "' first)");
@@ -786,6 +792,9 @@ int run_mnemon(int argc, char** argv) {
   std::string st_remname;
   st_rem->add_option("name", st_remname)->required();
   st_rem->callback([&] {
+    if (!mnemon::paths::valid_store_name(st_remname)) {
+      throw CLI::ValidationError("invalid store name \"" + st_remname + "\": must match [a-zA-Z0-9][a-zA-Z0-9_-]*");
+    }
     if (!mnemon::paths::store_exists(g_data_dir, st_remname)) {
       throw std::runtime_error("store \"" + st_remname + "\" does not exist");
     }
