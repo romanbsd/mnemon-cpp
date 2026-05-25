@@ -56,10 +56,16 @@ std::string read_active(const std::string& base) {
   if (line.empty()) {
     return kDefaultStore;
   }
+  if (!valid_store_name(line)) {
+    return kDefaultStore;
+  }
   return line;
 }
 
 bool write_active(const std::string& base, const std::string& name) {
+  if (!valid_store_name(name)) {
+    return false;
+  }
   std::error_code ec;
   fs::create_directories(base, ec);
   if (ec) {
@@ -81,7 +87,7 @@ std::vector<std::string> list_stores(const std::string& base) {
     return names;
   }
   for (const auto& e : fs::directory_iterator(data_dir, ec)) {
-    if (e.is_directory()) {
+    if (e.is_directory() && valid_store_name(e.path().filename().string())) {
       names.push_back(e.path().filename().string());
     }
   }
@@ -90,6 +96,9 @@ std::vector<std::string> list_stores(const std::string& base) {
 }
 
 bool store_exists(const std::string& base, const std::string& name) {
+  if (!valid_store_name(name)) {
+    return false;
+  }
   std::error_code ec;
   return fs::is_directory(store_dir(base, name), ec);
 }

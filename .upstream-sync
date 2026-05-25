@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=7efdebd44a825b51a0c31c258d3e4598a82c032a
-last_sha_subject=fix(setup): harden integration cleanup
-last_sha_date=2026-05-15T03:53:19Z
+last_sha=2015984173ed46d441f104173632a6b61c03c0f1
+last_sha_subject=fix(store): validate resolved store names
+last_sha_date=2026-05-15T03:54:43Z
