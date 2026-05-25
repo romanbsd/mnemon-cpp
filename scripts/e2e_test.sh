@@ -838,6 +838,34 @@ OUT=$($M --data-dir "$TESTDIR3" recall "test" --smart --intent INVALID 2>&1 || t
 assert_contains "rejects invalid intent" "$OUT" "unknown intent"
 
 # ══════════════════════════════════════════════════════════════════════
+banner "Input Validation: limit flags"
+# ══════════════════════════════════════════════════════════════════════
+
+VALDIR="$TESTDATA/val_test"
+mkdir -p "$VALDIR"
+$M --data-dir "$VALDIR" remember --no-diff "validation test insight" --cat fact --imp 3 > /dev/null
+
+step "recall — rejects --limit 0"
+OUT=$($M --data-dir "$VALDIR" recall "test" --limit 0 2>&1 || true)
+assert_contains "recall limit 0 rejected" "$OUT" "must be at least 1"
+
+step "search — rejects --limit 0"
+OUT=$($M --data-dir "$VALDIR" search "test" --limit 0 2>&1 || true)
+assert_contains "search limit 0 rejected" "$OUT" "must be at least 1"
+
+step "log — rejects --limit 0"
+OUT=$($M --data-dir "$VALDIR" log --limit 0 2>&1 || true)
+assert_contains "log limit 0 rejected" "$OUT" "must be at least 1"
+
+step "gc — rejects --limit 0"
+OUT=$($M --data-dir "$VALDIR" gc --limit 0 2>&1 || true)
+assert_contains "gc limit 0 rejected" "$OUT" "must be at least 1"
+
+step "gc — rejects negative --threshold"
+OUT=$($M --data-dir "$VALDIR" gc --threshold -0.1 2>&1 || true)
+assert_contains "gc threshold negative rejected" "$OUT" "must be non-negative"
+
+# ══════════════════════════════════════════════════════════════════════
 banner "Setup eject: markdown cleanup"
 # ══════════════════════════════════════════════════════════════════════
 

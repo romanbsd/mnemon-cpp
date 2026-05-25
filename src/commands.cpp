@@ -68,6 +68,20 @@ static std::unique_ptr<mnemon::Database> open_db() {
   return mnemon::Database::open_readwrite(dir);
 }
 
+static void require_positive_limit(const char* flag, int value) {
+  if (value < 1) {
+    throw std::runtime_error(std::string(flag) + " must be at least 1, got " + std::to_string(value));
+  }
+}
+
+static void require_non_negative_float(const char* flag, double value) {
+  if (value < 0.0) {
+    std::ostringstream oss;
+    oss << flag << " must be non-negative, got " << value;
+    throw std::runtime_error(oss.str());
+  }
+}
+
 static bool valid_category(const std::string& c) {
   static const char* ok[] = {"preference", "decision", "fact", "insight", "context", "general"};
   for (auto* x : ok) {
@@ -367,6 +381,7 @@ int run_mnemon(int argc, char** argv) {
   recall->add_flag("--smart", rec_smart)->group("");
   recall->add_option("--intent", rec_intent);
   recall->callback([&] {
+    require_positive_limit("--limit", rec_limit);
     std::string rec_query;
     for (size_t i = 0; i < rec_parts.size(); ++i) {
       if (i) {
@@ -442,6 +457,7 @@ int run_mnemon(int argc, char** argv) {
   search->add_option("query", sea_parts)->required()->expected(-1);
   search->add_option("--limit", sea_limit);
   search->callback([&] {
+    require_positive_limit("--limit", sea_limit);
     std::string sea_q;
     for (size_t i = 0; i < sea_parts.size(); ++i) {
       if (i) {
@@ -588,6 +604,8 @@ int run_mnemon(int argc, char** argv) {
   gc->add_option("--limit", gc_lim);
   gc->add_option("--keep", gc_keep);
   gc->callback([&] {
+    require_positive_limit("--limit", gc_lim);
+    require_non_negative_float("--threshold", gc_thr);
     auto db = open_db();
     if (!gc_keep.empty()) {
       auto ins = db->get_insight_by_id(gc_keep);
@@ -720,6 +738,7 @@ int run_mnemon(int argc, char** argv) {
   int log_limit = 20;
   logc->add_option("--limit", log_limit);
   logc->callback([&] {
+    require_positive_limit("--limit", log_limit);
     auto db = open_db();
     auto entries = db->get_oplog(log_limit);
     if (entries.empty()) {
