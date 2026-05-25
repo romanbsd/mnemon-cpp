@@ -25,12 +25,12 @@ struct DiffResult {
 
 struct EmbeddedItem {
   std::string id;
-  std::vector<double> embedding;
+  const std::vector<float>* embedding{nullptr};
 };
 
 struct DiffOptions {
   int limit{5};
-  std::vector<double> new_embedding;
+  std::vector<float> new_embedding;
   std::vector<EmbeddedItem> existing_embed;
 };
 

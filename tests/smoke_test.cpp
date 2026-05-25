@@ -1,6 +1,5 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/catch_approx.hpp>
 
 #include "vector_math.hpp"
 
@@ -22,13 +21,13 @@ TEST_CASE("diff: cosine 0.75 does not override token sim (same-domain different-
   base.content = "Dichorragia nesimachus singleton at Kinabalu Park, Sabah.";
 
   // Two unit vectors with cosine similarity ≈ 0.75
-  std::vector<double> new_vec  = {1.0, 0.0};
-  std::vector<double> old_vec  = {0.75, 0.6614}; // cos(new, old) ≈ 0.75
+  std::vector<float> new_vec  = {1.0f, 0.0f};
+  std::vector<float> old_vec  = {0.75f, 0.6614f}; // cos(new, old) ≈ 0.75
 
   DiffOptions opts;
   opts.limit        = 5;
   opts.new_embedding = new_vec;
-  opts.existing_embed.push_back({"kinabalu", old_vec});
+  opts.existing_embed.push_back({"kinabalu", &old_vec});
 
   auto res = diff_insights(
       {base},
@@ -154,4 +153,38 @@ TEST_CASE("cosine_similarity_many matches single cosine behavior") {
   REQUIRE(sims[1] == Catch::Approx(mnemon::cosine_similarity(q, b)));
   REQUIRE(sims[2] == Catch::Approx(0.0));
   REQUIRE(sims[3] == Catch::Approx(0.0));
+}
+
+TEST_CASE("float runtime vectors serialize as compatible float64 blobs") {
+  std::vector<float> runtime{3.0f, 4.0f};
+  mnemon::normalize_vector(runtime);
+
+  const auto blob = mnemon::serialize_vector(runtime);
+  REQUIRE(blob.size() == runtime.size() * sizeof(double));
+
+  const auto compat = mnemon::deserialize_vector(blob);
+  REQUIRE(compat.size() == runtime.size());
+  REQUIRE(compat[0] == Catch::Approx(0.6));
+  REQUIRE(compat[1] == Catch::Approx(0.8));
+
+  const auto restored = mnemon::deserialize_vector_f32(blob);
+  REQUIRE(restored.size() == runtime.size());
+  REQUIRE(restored[0] == Catch::Approx(runtime[0]));
+  REQUIRE(restored[1] == Catch::Approx(runtime[1]));
+}
+
+TEST_CASE("cosine_similarity_many_f32 matches single cosine behavior") {
+  const std::vector<float> q{1.0f, 2.0f, 3.0f};
+  const std::vector<float> a{1.0f, 2.0f, 3.0f};
+  const std::vector<float> b{3.0f, 2.0f, 1.0f};
+  const std::vector<float> z{0.0f, 0.0f, 0.0f};
+  const std::vector<float> bad{1.0f, 2.0f};
+  const std::vector<const std::vector<float>*> many{&a, &b, &z, &bad};
+
+  const auto sims = mnemon::cosine_similarity_many_f32(q, many);
+  REQUIRE(sims.size() == many.size());
+  REQUIRE(sims[0] == Catch::Approx(mnemon::cosine_similarity_f32(q, a)));
+  REQUIRE(sims[1] == Catch::Approx(mnemon::cosine_similarity_f32(q, b)));
+  REQUIRE(sims[2] == Catch::Approx(0.0f));
+  REQUIRE(sims[3] == Catch::Approx(0.0f));
 }

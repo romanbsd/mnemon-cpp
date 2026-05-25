@@ -8,7 +8,7 @@
 
 namespace mnemon::graph_eng {
 
-using EmbedCache = std::unordered_map<std::string, std::vector<double>>;
+using EmbedCache = std::unordered_map<std::string, std::vector<float>>;
 
 struct SemanticCandidate {
   std::string id;

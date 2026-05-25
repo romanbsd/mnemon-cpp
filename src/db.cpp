@@ -358,20 +358,28 @@ CREATE INDEX IF NOT EXISTS idx_oplog_created ON oplog(created_at);
 
 // Re-entrant depth counter: nested callers share one BEGIN/COMMIT pair.
 void Database::in_transaction(std::function<void()> fn) {
-  if (tx_depth_ == 0) {
+  const bool outermost = tx_depth_ == 0;
+  if (outermost) {
     exec_begin_immediate_with_retry(db_);
   }
   ++tx_depth_;
+  bool depth_decremented = false;
   try {
     fn();
     --tx_depth_;
-    if (tx_depth_ == 0) {
+    depth_decremented = true;
+    if (outermost) {
       exec_sql("COMMIT;");
     }
   } catch (...) {
-    --tx_depth_;
-    if (tx_depth_ == 0) {
-      exec_sql("ROLLBACK;");
+    if (!depth_decremented) {
+      --tx_depth_;
+    }
+    if (outermost) {
+      try {
+        exec_sql("ROLLBACK;");
+      } catch (...) {
+      }
     }
     throw;
   }
@@ -683,18 +691,17 @@ std::tuple<std::vector<RetentionCandidate>, int> Database::get_retention_candida
     }
   }
   // Persist refreshed EI for every scanned row in one transaction; rollback on any statement failure.
-  if (!ei_updates.empty()) {
-    sqlite3_exec(db_, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr);
+  if (!ei_updates.empty() && !readonly_) {
     try {
-      for (const auto& u : ei_updates) {
-        Statement up(db_, "UPDATE insights SET effective_importance = ? WHERE id = ?");
-        up.bind_double(1, u.second);
-        up.bind_text(2, u.first);
-        up.step();
-      }
-      sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+      in_transaction([&] {
+        for (const auto& u : ei_updates) {
+          Statement up(db_, "UPDATE insights SET effective_importance = ? WHERE id = ?");
+          up.bind_double(1, u.second);
+          up.bind_text(2, u.first);
+          up.step();
+        }
+      });
     } catch (const std::exception& ex) {
-      sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
       std::cerr << "warning: batch EI update failed, rolled back: " << ex.what() << "\n";
     }
   }
@@ -903,6 +910,24 @@ std::vector<EmbeddedRow> Database::get_all_embeddings() {
     if (!st.column_null(2)) {
       const void* p = st.column_blob(2);
       int n = st.column_bytes(2);
+      r.embedding.assign(static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n);
+    }
+    if (!r.embedding.empty()) {
+      out.push_back(std::move(r));
+    }
+  }
+  return out;
+}
+
+std::vector<EmbeddedRow> Database::get_all_embedding_blobs() {
+  Statement st(db_, "SELECT id, embedding FROM insights WHERE deleted_at IS NULL AND embedding IS NOT NULL");
+  std::vector<EmbeddedRow> out;
+  while (st.step()) {
+    EmbeddedRow r;
+    r.id = st.column_text(0);
+    if (!st.column_null(1)) {
+      const void* p = st.column_blob(1);
+      int n = st.column_bytes(1);
       r.embedding.assign(static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n);
     }
     if (!r.embedding.empty()) {

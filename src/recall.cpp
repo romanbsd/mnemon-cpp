@@ -75,14 +75,14 @@ struct Anchor {
   std::string via;
 };
 
-std::vector<VecHit> vector_search_from_cache(const std::unordered_map<std::string, std::vector<double>>& cache,
-                                             const std::vector<double>& query_vec, int limit) {
+std::vector<VecHit> vector_search_from_cache(const std::unordered_map<std::string, std::vector<float>>& cache,
+                                             const std::vector<float>& query_vec, int limit) {
   if (query_vec.empty() || limit <= 0) {
     return {};
   }
   std::vector<VecHit> hits;
   std::vector<std::string> ids;
-  std::vector<const std::vector<double>*> vec_refs;
+  std::vector<const std::vector<float>*> vec_refs;
   ids.reserve(cache.size());
   vec_refs.reserve(cache.size());
   for (const auto& [id, vec] : cache) {
@@ -90,7 +90,7 @@ std::vector<VecHit> vector_search_from_cache(const std::unordered_map<std::strin
     vec_refs.push_back(&vec);
   }
 
-  auto sims = mnemon::cosine_similarity_many(query_vec, vec_refs);
+  auto sims = mnemon::cosine_similarity_many_f32(query_vec, vec_refs);
   for (size_t i = 0; i < ids.size(); ++i) {
     double sim = sims[i];
     if (sim <= 0.1) { // same cutoff as semantic edge builder noise floor
@@ -107,11 +107,11 @@ std::vector<VecHit> vector_search_from_cache(const std::unordered_map<std::strin
 
 // Layered beam: expand neighbors by structural edge weight + optional cosine to query; keep top `beam` per depth.
 void beam_search_from_anchor(Database& db, const std::string& start_id, double start_score,
-                             const std::vector<double>& query_vec, const IntentWeights& weights, const Trav& params,
+                             const std::vector<float>& query_vec, const IntentWeights& weights, const Trav& params,
                              std::unordered_map<std::string, double>& score_map,
                              std::unordered_map<std::string, std::string>& via_map,
                              std::unordered_map<std::string, Insight>& insight_map,
-                             const std::unordered_map<std::string, std::vector<double>>* embed_cache) {
+                             const std::unordered_map<std::string, std::vector<float>>* embed_cache) {
   std::unordered_set<std::string> visited;
   visited.insert(start_id);
   int total_visited = 1;
@@ -150,7 +150,7 @@ void beam_search_from_anchor(Database& db, const std::string& start_id, double s
         if (!query_vec.empty() && embed_cache) {
           auto nit = embed_cache->find(neighbor);
           if (nit != embed_cache->end()) {
-            double cos_sim = mnemon::cosine_similarity(query_vec, nit->second);
+            double cos_sim = mnemon::cosine_similarity_f32(query_vec, nit->second);
             if (cos_sim > 0) {
               semantic = cos_sim;
             }
@@ -247,7 +247,7 @@ std::vector<RecallResult> causal_topological_sort(Database& db, std::vector<Reca
 } // namespace
 
 // Fused anchors (RRF + L2-normalize) seed the graph; each anchor runs beam_search. Rerank mixes kw/entity/sim/graph.
-RecallResponse intent_aware_recall(Database& db, std::string_view query, const std::vector<double>& query_vec,
+RecallResponse intent_aware_recall(Database& db, std::string_view query, const std::vector<float>& query_vec,
                                  const std::vector<std::string>& query_entities, int limit,
                                  std::optional<Intent> intent_override) {
   Intent intent = Intent::General;
@@ -262,12 +262,13 @@ RecallResponse intent_aware_recall(Database& db, std::string_view query, const s
   Trav params = trav_for(intent);
 
   auto all = db.get_all_active_insights();
-  std::unordered_map<std::string, std::vector<double>> embed_cache;
+  std::unordered_map<std::string, std::vector<float>> embed_cache;
   bool has_embeddings = false;
   if (!query_vec.empty()) {
-    for (const auto& row : db.get_all_embeddings()) {
-      auto v = mnemon::deserialize_vector(row.embedding);
+    for (const auto& row : db.get_all_embedding_blobs()) {
+      auto v = mnemon::deserialize_vector_f32(row.embedding);
       if (!v.empty()) {
+        mnemon::normalize_vector(v);
         embed_cache[row.id] = std::move(v);
       }
     }
@@ -341,7 +342,7 @@ RecallResponse intent_aware_recall(Database& db, std::string_view query, const s
     insight_map[id] = a.insight;
   }
 
-  const std::unordered_map<std::string, std::vector<double>>* ec_ptr =
+  const std::unordered_map<std::string, std::vector<float>>* ec_ptr =
       has_embeddings ? &embed_cache : nullptr;
   for (const auto& [id, a] : anchor_map) {
     beam_search_from_anchor(db, id, a.score, query_vec, weights, params, score_map, via_map, insight_map, ec_ptr);
@@ -393,16 +394,18 @@ RecallResponse intent_aware_recall(Database& db, std::string_view query, const s
 
   for (auto& c : cands) {
     if (!query_tokens.empty()) {
-      TokenSet content_tokens;
+      TokenSet owned_tokens;
+      const TokenSet* content_tokens = nullptr;
       auto tit = token_cache.find(c.id);
       if (tit != token_cache.end()) {
-        content_tokens = tit->second;
+        content_tokens = &tit->second;
       } else {
-        content_tokens = insight_tokens(c.ins);
+        owned_tokens = insight_tokens(c.ins);
+        content_tokens = &owned_tokens;
       }
       int inter = 0;
       for (const auto& t : query_tokens) {
-        if (content_tokens.count(t)) {
+        if (content_tokens->count(t)) {
           inter++;
         }
       }
@@ -424,7 +427,7 @@ RecallResponse intent_aware_recall(Database& db, std::string_view query, const s
     if (has_embeddings) {
       auto vit = embed_cache.find(c.id);
       if (vit != embed_cache.end()) {
-        double sim = mnemon::cosine_similarity(query_vec, vit->second);
+        double sim = mnemon::cosine_similarity_f32(query_vec, vit->second);
         if (sim > 0) {
           c.sim = sim;
         }

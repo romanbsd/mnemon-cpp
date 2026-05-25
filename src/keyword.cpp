@@ -31,12 +31,14 @@ std::vector<ScoredInsight> keyword_search_cached(const std::vector<Insight>& ins
   std::vector<ScoredInsight> all;
   for (const auto& ins : insights) {
     TokenSet content_tokens = insight_tokens(ins);
+    const TokenSet* scoring_tokens = &content_tokens;
     if (token_cache) {
-      (*token_cache)[ins.id] = content_tokens;
+      auto [it, _] = token_cache->insert_or_assign(ins.id, std::move(content_tokens));
+      scoring_tokens = &it->second;
     }
     int inter = 0;
     for (const auto& t : query_tokens) {
-      if (content_tokens.count(t)) {
+      if (scoring_tokens->count(t)) {
         inter++;
       }
     }

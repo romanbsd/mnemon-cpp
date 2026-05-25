@@ -271,11 +271,13 @@ int run_mnemon(int argc, char** argv) {
 
     auto db = open_db();
     mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
-    std::vector<double> embed_vec;
+    const bool embedding_available = oc.available();
+    std::vector<float> embed_vec;
     std::vector<uint8_t> embed_blob;
-    if (oc.available()) {
+    if (embedding_available) {
       try {
-        embed_vec = oc.embed(rem_content);
+        embed_vec = mnemon::to_float_vector(oc.embed(rem_content));
+        mnemon::normalize_vector(embed_vec);
         embed_blob = mnemon::serialize_vector(embed_vec);
       } catch (...) {
         embed_vec.clear();
@@ -284,7 +286,7 @@ int run_mnemon(int argc, char** argv) {
     }
 
     mnemon::graph_eng::EmbedCache embed_cache;
-    if (oc.available()) {
+    if (embedding_available) {
       embed_cache = mnemon::graph_eng::build_embed_cache(*db);
     }
 
@@ -294,7 +296,7 @@ int run_mnemon(int argc, char** argv) {
     if (!rem_no_diff) {
       std::vector<mnemon::search_engine::EmbeddedItem> eitems;
       for (const auto& [id, vec] : embed_cache) {
-        eitems.push_back({id, vec});
+        eitems.push_back({id, &vec});
       }
       mnemon::search_engine::DiffOptions dopts;
       dopts.limit = 5;
@@ -340,8 +342,8 @@ int run_mnemon(int argc, char** argv) {
       return;
     }
 
-    mnemon::graph_eng::EmbedCache* ec_ptr = oc.available() ? &embed_cache : nullptr;
-    if (oc.available() && !embed_vec.empty()) {
+    mnemon::graph_eng::EmbedCache* ec_ptr = embedding_available ? &embed_cache : nullptr;
+    if (embedding_available && !embed_vec.empty()) {
       ec_ptr = &embed_cache;
     }
 
@@ -477,11 +479,13 @@ int run_mnemon(int argc, char** argv) {
       }
       ov = *p;
     }
-    std::vector<double> qvec;
+    std::vector<float> qvec;
     mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
-    if (oc.available()) {
+    const bool embedding_available = oc.available();
+    if (embedding_available) {
       try {
-        qvec = oc.embed(rec_query);
+        qvec = mnemon::to_float_vector(oc.embed(rec_query));
+        mnemon::normalize_vector(qvec);
       } catch (...) {
         qvec.clear();
       }
@@ -718,17 +722,18 @@ int run_mnemon(int argc, char** argv) {
   embed->callback([&] {
     auto db = open_db();
     mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
+    const bool embedding_available = oc.available();
     if (emb_status) {
       auto [tot, emb] = db->embedding_stats();
       int pct = tot > 0 ? static_cast<int>(std::lround(100.0 * static_cast<double>(emb) / static_cast<double>(tot))) : 0;
       print_json(nlohmann::json{{"total_insights", tot},
                                  {"embedded", emb},
                                  {"coverage", std::to_string(pct) + "%"},
-                                 {"ollama_available", oc.available()},
+                                 {"ollama_available", embedding_available},
                                  {"model", oc.model}});
       return;
     }
-    if (!oc.available()) {
+    if (!embedding_available) {
       throw std::runtime_error("Ollama not available at " + oc.endpoint + " — install with: brew install ollama && ollama pull " + oc.model);
     }
     if (!emb_id.empty()) {
@@ -736,7 +741,8 @@ int run_mnemon(int argc, char** argv) {
       if (!ins) {
         throw std::runtime_error("insight " + emb_id + " not found");
       }
-      auto vec = oc.embed(ins->content);
+      auto vec = mnemon::to_float_vector(oc.embed(ins->content));
+      mnemon::normalize_vector(vec);
       db->update_embedding(emb_id, mnemon::serialize_vector(vec));
       db->log_op("embed", emb_id, "dim=" + std::to_string(vec.size()) + " model=" + oc.model);
       print_json(
@@ -754,7 +760,8 @@ int run_mnemon(int argc, char** argv) {
     int ok = 0, bad = 0;
     for (const auto& ins : missing) {
       try {
-        auto vec = oc.embed(ins.content);
+        auto vec = mnemon::to_float_vector(oc.embed(ins.content));
+        mnemon::normalize_vector(vec);
         db->update_embedding(ins.id, mnemon::serialize_vector(vec));
         ok++;
       } catch (...) {
