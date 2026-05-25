@@ -1,3 +1,4 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
@@ -33,6 +34,37 @@ TEST_CASE("diff: cosine 0.75 does not override token sim (same-domain different-
       {base},
       "Dichorragia nesimachus first record in Bentong, Pahang.",
       opts);
+
+  REQUIRE(res.suggestion == DiffSuggestion::Add);
+}
+
+// --- Jaccard similarity ---
+
+TEST_CASE("jaccard: identical strings score 1.0") {
+  REQUIRE(jaccard_similarity("Go uses SQLite", "Go uses SQLite") == Catch::Approx(1.0));
+}
+
+TEST_CASE("jaccard: disjoint strings score 0.0") {
+  REQUIRE(jaccard_similarity("apple banana", "dog elephant") == Catch::Approx(0.0));
+}
+
+TEST_CASE("jaccard: same-domain different-fact pair scores low") {
+  // Shared tokens: species name + survey jargon; distinct tokens: location names
+  double sim = jaccard_similarity(
+      "Dichorragia nesimachus singleton at Kinabalu Park, Sabah.",
+      "Dichorragia nesimachus first record in Bentong, Pahang.");
+  REQUIRE(sim < 0.5);
+}
+
+TEST_CASE("diff: jaccard used in dedup — same-domain different-fact produces ADD") {
+  Insight base;
+  base.id      = "kinabalu";
+  base.content = "Dichorragia nesimachus singleton at Kinabalu Park, Sabah.";
+
+  auto res = diff_insights(
+      {base},
+      "Dichorragia nesimachus first record in Bentong, Pahang.",
+      DiffOptions{});
 
   REQUIRE(res.suggestion == DiffSuggestion::Add);
 }

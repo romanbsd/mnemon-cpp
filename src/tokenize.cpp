@@ -177,4 +177,23 @@ double content_similarity(std::string_view a, std::string_view b) {
   return sa > sb ? sa : sb;
 }
 
+double jaccard_similarity(std::string_view a, std::string_view b) {
+  auto ta = tokenize(a);
+  auto tb = tokenize(b);
+  if (ta.empty() || tb.empty()) {
+    return 0;
+  }
+  int inter = 0;
+  for (const auto& [k, _] : ta) {
+    if (tb.count(k)) {
+      inter++;
+    }
+  }
+  int uni = static_cast<int>(ta.size()) + static_cast<int>(tb.size()) - inter;
+  if (uni == 0) {
+    return 0;
+  }
+  return static_cast<double>(inter) / static_cast<double>(uni);
+}
+
 } // namespace mnemon::search_engine
