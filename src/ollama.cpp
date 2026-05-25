@@ -67,14 +67,16 @@ static void configure_client_embed(httplib::Client& cli) {
 
 } // namespace
 
-OllamaClient OllamaClient::from_env() {
+OllamaClient OllamaClient::from_env_with_model(const std::string& model_override) {
   OllamaClient c;
   if (const char* e = std::getenv("MNEMON_EMBED_ENDPOINT"); e && *e) {
     c.endpoint = e;
   } else {
     c.endpoint = "http://localhost:11434";
   }
-  if (const char* m = std::getenv("MNEMON_EMBED_MODEL"); m && *m) {
+  if (!model_override.empty()) {
+    c.model = model_override;
+  } else if (const char* m = std::getenv("MNEMON_EMBED_MODEL"); m && *m) {
     c.model = m;
   } else {
     c.model = "nomic-embed-text";
@@ -83,6 +85,10 @@ OllamaClient OllamaClient::from_env() {
     c.dimensions = std::atoi(d);
   }
   return c;
+}
+
+OllamaClient OllamaClient::from_env() {
+  return from_env_with_model("");
 }
 
 bool OllamaClient::available() const {
