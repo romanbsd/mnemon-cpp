@@ -741,6 +741,11 @@ static void eject_markdown(const std::string& file_path, const std::string& prom
   }
 }
 
+static void eject_local_markdown(bool yes) {
+  eject_markdown("CLAUDE.md", "Remove memory guidance from ./CLAUDE.md?", yes);
+  eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
+}
+
 static int claude_eject(const std::string& config_dir, bool yes) {
   std::cout << "\nRemoving Claude Code integration (" << config_dir << ")...\n";
   int errs = 0;
@@ -1451,6 +1456,7 @@ static void run_eject_flow(const RunOptions& opt) {
   }
   if (installed.empty()) {
     std::cout << "\nNo environments detected.\n";
+    eject_local_markdown(opt.yes);
     return;
   }
 
