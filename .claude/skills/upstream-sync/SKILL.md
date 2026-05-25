@@ -94,6 +94,7 @@ No branch. Accumulate the SHA. When the next branch is created, run `bash script
 3. Decide: does this commit need a C++ port? If clearly no-op (e.g., upstream refactored a private Go helper with no observable behavior change), treat as `doc-meta-only` — accumulate and move on. State your reasoning in a recallium note (type=decision).
 4. If a port is needed: write or modify a TEST FIRST.
    - Behavioral changes (CLI output, JSON keys, error wording, exit codes, schema): edit `scripts/e2e_test.sh`. Follow the existing `assert_jq` and milestone-banner patterns.
+   - **`assert_jq` uses `jq -r` (raw output).** For string values, do NOT include JSON quotes in the expected argument: write `'foo'` not `'"foo"'`. Booleans and numbers are unquoted as usual.
    - Pure in-process logic (engine helpers, math, parsing): add a Catch2 test in `tests/smoke_test.cpp`.
    - The test must FAIL before you implement.
 5. Implement the change in `src/`. Match `mnemon-spec.md` parity over idiomatic C++ — JSON keys, error wording, exit codes, file layout are part of the contract enforced by `scripts/e2e_test.sh`.
@@ -199,3 +200,6 @@ The script reads `.upstream-tag-pending`, finds local commits via the trailer (w
 - Including unrelated changes in a port-PR. Each PR contains only the C++ diff for its upstream commit (plus tracker bump and optional tag-pending entry).
 - Forgetting to `git add` newly created files. Always stage with explicit paths (`git add path/to/new_file.cpp`) — `git add -u` only stages modifications, silently omitting new sources, tests, or fixtures.
 - Force-pushing to a stacked branch after later branches have been built off it. If you must rewrite, rebuild the entire stack from that point forward.
+- **Advancing tracker to a feature-branch commit instead of its merge commit.** When a commit lives on a feature branch (not master), advancing the tracker to it leaves `git log <sha>..upstream/master` showing the merge commit and any master-only commits that preceded the merge as "new" in the next batch. Always advance to the merge commit (`882d425e`-style) when one exists — it subsumes all branch history and gives `classify` a clean baseline.
+- **New target's config file differs from Claude's.** Claude Code uses `settings.json`; Codex uses `hooks.json`; OpenClaw uses `openclaw.json`. Check the upstream `codex.go` / detect file before assuming the pattern from a previous environment applies.
+- **`assert_jq` string quoting.** The helper runs `jq -r`, so raw string output has no surrounding quotes. Write `'myvalue'` not `'"myvalue"'` in the expected argument or the test will always fail.

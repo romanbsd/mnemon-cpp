@@ -113,8 +113,10 @@ test_classify_rejects_rewritten_history() {
   echo "OK: test_classify_rejects_rewritten_history"
 }
 
-test_classify_merge_commit_is_relevant() {
+test_classify_merge_commit_is_doc_meta() {
   # Build a fresh fixture with two parallel branches and a merge commit.
+  # The merge commit has an empty diff (its content is expressed by its parents),
+  # so classify_paths should return doc-meta-only.
   local UP="$TEST_TMP/upstream-merge"
   rm -rf "$UP"
   git init -q -b main "$UP"
@@ -150,16 +152,16 @@ test_classify_merge_commit_is_relevant() {
          MNEMON_UPSTREAM_URL="$UP" MNEMON_UPSTREAM_BRANCH=main \
          bash "$HELPER" classify )
 
-  # The merge commit must appear with class "relevant".
+  # The merge commit has an empty diff so it must be doc-meta-only.
   local merge_class
   merge_class=$(jq -r --arg s "$merge_sha" '.commits[] | select(.sha == $s) | .class' <<< "$out")
-  [[ "$merge_class" == "relevant" ]] || fail "merge commit classified as '$merge_class', expected 'relevant'"
-  echo "OK: test_classify_merge_commit_is_relevant"
+  [[ "$merge_class" == "doc-meta-only" ]] || fail "merge commit classified as '$merge_class', expected 'doc-meta-only'"
+  echo "OK: test_classify_merge_commit_is_doc_meta"
 }
 
 test_classify_emits_correct_classes
 test_classify_rejects_rewritten_history
-test_classify_merge_commit_is_relevant
+test_classify_merge_commit_is_doc_meta
 echo "All classify tests passed."
 
 test_advance_bumps_tracker() {
