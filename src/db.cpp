@@ -5,6 +5,7 @@
 
 #include "model_json.hpp"
 #include "time_util.hpp"
+#include "vector_math.hpp"
 
 #include <sqlite3.h>
 
@@ -358,20 +359,28 @@ CREATE INDEX IF NOT EXISTS idx_oplog_created ON oplog(created_at);
 
 // Re-entrant depth counter: nested callers share one BEGIN/COMMIT pair.
 void Database::in_transaction(std::function<void()> fn) {
-  if (tx_depth_ == 0) {
+  const bool outermost = tx_depth_ == 0;
+  if (outermost) {
     exec_begin_immediate_with_retry(db_);
   }
   ++tx_depth_;
+  bool depth_decremented = false;
   try {
     fn();
     --tx_depth_;
-    if (tx_depth_ == 0) {
+    depth_decremented = true;
+    if (outermost) {
       exec_sql("COMMIT;");
     }
   } catch (...) {
-    --tx_depth_;
-    if (tx_depth_ == 0) {
-      exec_sql("ROLLBACK;");
+    if (!depth_decremented) {
+      --tx_depth_;
+    }
+    if (outermost) {
+      try {
+        exec_sql("ROLLBACK;");
+      } catch (...) {
+      }
     }
     throw;
   }
@@ -683,18 +692,17 @@ std::tuple<std::vector<RetentionCandidate>, int> Database::get_retention_candida
     }
   }
   // Persist refreshed EI for every scanned row in one transaction; rollback on any statement failure.
-  if (!ei_updates.empty()) {
-    sqlite3_exec(db_, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr);
+  if (!ei_updates.empty() && !readonly_) {
     try {
-      for (const auto& u : ei_updates) {
-        Statement up(db_, "UPDATE insights SET effective_importance = ? WHERE id = ?");
-        up.bind_double(1, u.second);
-        up.bind_text(2, u.first);
-        up.step();
-      }
-      sqlite3_exec(db_, "COMMIT;", nullptr, nullptr, nullptr);
+      in_transaction([&] {
+        for (const auto& u : ei_updates) {
+          Statement up(db_, "UPDATE insights SET effective_importance = ? WHERE id = ?");
+          up.bind_double(1, u.second);
+          up.bind_text(2, u.first);
+          up.step();
+        }
+      });
     } catch (const std::exception& ex) {
-      sqlite3_exec(db_, "ROLLBACK;", nullptr, nullptr, nullptr);
       std::cerr << "warning: batch EI update failed, rolled back: " << ex.what() << "\n";
     }
   }
@@ -871,7 +879,8 @@ InsightStats Database::get_stats() {
   return s;
 }
 
-void Database::update_embedding(const std::string& id, const std::vector<uint8_t>& blob) {
+void Database::update_embedding(const std::string& id, const std::vector<float>& v) {
+  auto blob = mnemon::serialize_vector(v);
   Statement st(db_, "UPDATE insights SET embedding = ?, updated_at = ? WHERE id = ?");
   st.bind_blob(1, blob.data(), blob.size());
   st.bind_text(2, time_util::rfc3339_utc(time_util::now_utc()));
@@ -879,7 +888,7 @@ void Database::update_embedding(const std::string& id, const std::vector<uint8_t
   st.step();
 }
 
-std::vector<uint8_t> Database::get_embedding(const std::string& id) {
+std::vector<float> Database::get_embedding(const std::string& id) {
   Statement st(db_, "SELECT embedding FROM insights WHERE id = ? AND deleted_at IS NULL");
   st.bind_text(1, id);
   if (!st.step()) {
@@ -890,20 +899,19 @@ std::vector<uint8_t> Database::get_embedding(const std::string& id) {
   }
   const void* p = st.column_blob(0);
   int n = st.column_bytes(0);
-  return std::vector<uint8_t>(static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n);
+  return mnemon::deserialize_vector(p, static_cast<size_t>(n));
 }
 
 std::vector<EmbeddedRow> Database::get_all_embeddings() {
-  Statement st(db_, "SELECT id, content, embedding FROM insights WHERE deleted_at IS NULL AND embedding IS NOT NULL");
+  Statement st(db_, "SELECT id, embedding FROM insights WHERE deleted_at IS NULL AND embedding IS NOT NULL");
   std::vector<EmbeddedRow> out;
   while (st.step()) {
     EmbeddedRow r;
     r.id = st.column_text(0);
-    r.content = st.column_text(1);
-    if (!st.column_null(2)) {
-      const void* p = st.column_blob(2);
-      int n = st.column_bytes(2);
-      r.embedding.assign(static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n);
+    if (!st.column_null(1)) {
+      const void* p = st.column_blob(1);
+      int n = st.column_bytes(1);
+      r.embedding = mnemon::deserialize_vector(p, static_cast<size_t>(n));
     }
     if (!r.embedding.empty()) {
       out.push_back(std::move(r));

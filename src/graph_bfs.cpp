@@ -9,12 +9,14 @@ namespace mnemon::graph_eng {
 
 std::vector<BFSNode> bfs(Database& db, const std::string& start_id, const BFSOptions& opts) {
   auto all_insights = db.get_all_active_insights();
-  std::unordered_map<std::string, Insight> imap;
+  std::unordered_map<std::string, const Insight*> imap;
+  imap.reserve(all_insights.size());
   for (const auto& i : all_insights) {
-    imap[i.id] = i;
+    imap[i.id] = &i;
   }
   auto all_edges = db.get_all_edges();
   std::unordered_map<std::string, std::vector<Edge>> adj;
+  adj.reserve(all_insights.size());
   for (const auto& e : all_edges) {
     adj[e.source_id].push_back(e);
     if (e.source_id != e.target_id) {
@@ -57,7 +59,7 @@ std::vector<BFSNode> bfs(Database& db, const std::string& start_id, const BFSOpt
       if (it == imap.end()) {
         continue;
       }
-      result.push_back(BFSNode{it->second, cur.hop + 1, edge});
+      result.push_back(BFSNode{*it->second, cur.hop + 1, edge});
       if (opts.max_nodes > 0 && static_cast<int>(result.size()) >= opts.max_nodes) {
         break;
       }

@@ -92,8 +92,8 @@ public:
   std::vector<Insight> get_all_active_insights();
   InsightStats get_stats();
 
-  void update_embedding(const std::string& id, const std::vector<uint8_t>& blob);
-  std::vector<uint8_t> get_embedding(const std::string& id);
+  void update_embedding(const std::string& id, const std::vector<float>& v);
+  std::vector<float> get_embedding(const std::string& id);
   std::vector<EmbeddedRow> get_all_embeddings();
   std::tuple<int, int> embedding_stats();
   std::vector<Insight> get_insights_without_embedding(int limit);

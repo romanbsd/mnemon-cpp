@@ -8,6 +8,7 @@
 #include <cctype>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace mnemon::search_engine {
 
@@ -70,22 +71,22 @@ std::string diff_suggestion_str(DiffSuggestion s) {
 DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view new_content, const DiffOptions& opts) {
   int lim = opts.limit > 0 ? opts.limit : 5;
   auto candidates = keyword_search(insights, new_content, lim);
-  std::unordered_map<std::string, std::vector<double>> embed_map;
+  std::unordered_map<std::string, std::span<const float>> embed_map;
   for (const auto& e : opts.existing_embed) {
     embed_map[e.id] = e.embedding;
   }
 
   std::vector<DiffMatch> matches;
-  std::vector<const std::vector<double>*> cand_vecs;
-  std::vector<double> cand_cos;
+  std::vector<std::span<const float>> cand_vecs;
+  std::vector<float> cand_cos;
   if (!opts.new_embedding.empty()) {
     cand_vecs.reserve(candidates.size());
     for (const auto& c : candidates) {
       auto it = embed_map.find(c.insight.id);
       if (it != embed_map.end() && !it->second.empty()) {
-        cand_vecs.push_back(&it->second);
+        cand_vecs.push_back(it->second);
       } else {
-        cand_vecs.push_back(nullptr);
+        cand_vecs.push_back({});
       }
     }
     cand_cos = mnemon::cosine_similarity_many(opts.new_embedding, cand_vecs);
@@ -108,25 +109,25 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
   }
 
   if (!opts.new_embedding.empty() && !opts.existing_embed.empty()) {
-    std::unordered_map<std::string, bool> seen;
+    std::unordered_set<std::string> seen;
     for (const auto& m : matches) {
-      seen[m.id] = true;
+      seen.insert(m.id);
     }
     struct P {
       std::string id;
       double sim;
     };
     std::vector<P> top_cos;
-    std::vector<const std::vector<double>*> second_vecs;
+    std::vector<std::span<const float>> second_vecs;
     std::vector<std::string> second_ids;
     second_vecs.reserve(opts.existing_embed.size());
     second_ids.reserve(opts.existing_embed.size());
     for (const auto& ei : opts.existing_embed) {
-      if (seen[ei.id]) {
+      if (seen.count(ei.id) || ei.embedding.empty()) {
         continue;
       }
       second_ids.push_back(ei.id);
-      second_vecs.push_back(&ei.embedding);
+      second_vecs.push_back(ei.embedding);
     }
     auto second_cos = mnemon::cosine_similarity_many(opts.new_embedding, second_vecs);
     for (size_t i = 0; i < second_ids.size(); ++i) {
@@ -139,24 +140,25 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
     if (static_cast<int>(top_cos.size()) > lim) {
       top_cos.resize(static_cast<size_t>(lim));
     }
-    std::unordered_map<std::string, Insight> id_to_ins;
+    std::unordered_map<std::string, const Insight*> id_to_ins;
+    id_to_ins.reserve(insights.size());
     for (const auto& ins : insights) {
-      id_to_ins[ins.id] = ins;
+      id_to_ins[ins.id] = &ins;
     }
     for (const auto& cp : top_cos) {
       auto it = id_to_ins.find(cp.id);
       if (it == id_to_ins.end()) {
         continue;
       }
-      double token_sim = jaccard_similarity(new_content, it->second.content);
+      const Insight& ins = *it->second;
+      double token_sim = jaccard_similarity(new_content, ins.content);
       double similarity = token_sim;
       if (cp.sim >= 0.85 && cp.sim > similarity) {
         similarity = cp.sim;
       }
-      auto sug = classify_suggestion(similarity, new_content, it->second.content);
+      auto sug = classify_suggestion(similarity, new_content, ins.content);
       if (sug != DiffSuggestion::Add) {
-        matches.push_back(
-            DiffMatch{it->second.id, it->second.content, token_sim, cp.sim, similarity, sug});
+        matches.push_back(DiffMatch{ins.id, ins.content, token_sim, cp.sim, similarity, sug});
       }
     }
   }

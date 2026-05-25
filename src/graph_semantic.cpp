@@ -19,10 +19,10 @@ static constexpr int kMaxAutoSemanticEdges = 3;
 
 EmbedCache build_embed_cache(Database& db) {
   EmbedCache c;
-  for (const auto& row : db.get_all_embeddings()) {
-    auto v = mnemon::deserialize_vector(row.embedding);
-    if (!v.empty()) {
-      c[row.id] = std::move(v);
+  for (auto& row : db.get_all_embeddings()) {
+    if (!row.embedding.empty()) {
+      mnemon::normalize_vector(row.embedding);
+      c[row.id] = std::move(row.embedding);
     }
   }
   return c;
@@ -38,14 +38,14 @@ int create_semantic_edges(Database& db, Insight& insight, EmbedCache* cache) {
   if (it == cache->end() || it->second.empty()) {
     return 0;
   }
-  const auto& insight_vec = it->second;
+  const std::span<const float> insight_vec = it->second;
   struct Sc {
     std::string id;
     double sim;
   };
   std::vector<Sc> candidates;
   std::vector<std::string> ids;
-  std::vector<const std::vector<double>*> vec_refs;
+  std::vector<std::span<const float>> vec_refs;
   ids.reserve(cache->size());
   vec_refs.reserve(cache->size());
   for (const auto& [id, other_vec] : *cache) {
@@ -53,7 +53,7 @@ int create_semantic_edges(Database& db, Insight& insight, EmbedCache* cache) {
       continue;
     }
     ids.push_back(id);
-    vec_refs.push_back(&other_vec);
+    vec_refs.push_back(other_vec);
   }
   auto sims = mnemon::cosine_similarity_many(insight_vec, vec_refs);
   for (size_t i = 0; i < ids.size(); ++i) {
@@ -107,7 +107,7 @@ static std::vector<SemanticCandidate> find_by_embedding(Database& db, const Insi
   };
   std::vector<Sc> hits;
   std::vector<std::string> ids;
-  std::vector<const std::vector<double>*> vec_refs;
+  std::vector<std::span<const float>> vec_refs;
   ids.reserve(cache.size());
   vec_refs.reserve(cache.size());
   for (const auto& [id, vec] : cache) {
@@ -115,7 +115,7 @@ static std::vector<SemanticCandidate> find_by_embedding(Database& db, const Insi
       continue;
     }
     ids.push_back(id);
-    vec_refs.push_back(&vec);
+    vec_refs.push_back(vec);
   }
   auto sims = mnemon::cosine_similarity_many(it->second, vec_refs);
   for (size_t i = 0; i < ids.size(); ++i) {
@@ -147,8 +147,9 @@ static std::vector<SemanticCandidate> find_by_embedding(Database& db, const Insi
 
 static std::vector<SemanticCandidate> find_by_token_overlap(Database& db, const Insight& insight) {
   auto all = db.get_all_active_insights();
+  const auto insight_tokens = search_engine::tokenize(insight.content);
   struct Sc {
-    Insight ins;
+    const Insight* ins;
     double sim;
   };
   std::vector<Sc> cands;
@@ -156,9 +157,10 @@ static std::vector<SemanticCandidate> find_by_token_overlap(Database& db, const 
     if (other.id == insight.id) {
       continue;
     }
-    double sim = search_engine::content_similarity(insight.content, other.content);
+    const auto other_tokens = search_engine::tokenize(other.content);
+    double sim = search_engine::content_similarity_tokens(insight_tokens, other_tokens);
     if (sim >= kMinSemanticSimilarity) {
-      cands.push_back({other, sim});
+      cands.push_back({&other, sim});
     }
   }
   std::sort(cands.begin(), cands.end(), [](const Sc& a, const Sc& b) { return a.sim > b.sim; });
@@ -167,7 +169,7 @@ static std::vector<SemanticCandidate> find_by_token_overlap(Database& db, const 
   }
   std::vector<SemanticCandidate> out;
   for (const auto& c : cands) {
-    out.push_back(SemanticCandidate{c.ins.id, c.ins.content, c.ins.category, c.sim, false});
+    out.push_back(SemanticCandidate{c.ins->id, c.ins->content, c.ins->category, c.sim, false});
   }
   return out;
 }

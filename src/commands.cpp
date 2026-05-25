@@ -271,20 +271,19 @@ int run_mnemon(int argc, char** argv) {
 
     auto db = open_db();
     mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
-    std::vector<double> embed_vec;
-    std::vector<uint8_t> embed_blob;
-    if (oc.available()) {
+    const bool embedding_available = oc.available();
+    std::vector<float> embed_vec;
+    if (embedding_available) {
       try {
         embed_vec = oc.embed(rem_content);
-        embed_blob = mnemon::serialize_vector(embed_vec);
+        mnemon::normalize_vector(embed_vec);
       } catch (...) {
         embed_vec.clear();
-        embed_blob.clear();
       }
     }
 
     mnemon::graph_eng::EmbedCache embed_cache;
-    if (oc.available()) {
+    if (embedding_available) {
       embed_cache = mnemon::graph_eng::build_embed_cache(*db);
     }
 
@@ -340,8 +339,8 @@ int run_mnemon(int argc, char** argv) {
       return;
     }
 
-    mnemon::graph_eng::EmbedCache* ec_ptr = oc.available() ? &embed_cache : nullptr;
-    if (oc.available() && !embed_vec.empty()) {
+    mnemon::graph_eng::EmbedCache* ec_ptr = embedding_available ? &embed_cache : nullptr;
+    if (embedding_available && !embed_vec.empty()) {
       ec_ptr = &embed_cache;
     }
 
@@ -362,10 +361,10 @@ int run_mnemon(int argc, char** argv) {
           }
         }
         db->insert_insight(insight);
-        if (!embed_blob.empty()) {
-          db->update_embedding(insight.id, embed_blob);
+        if (!embed_vec.empty()) {
+          db->update_embedding(insight.id, embed_vec);
           embedded = true;
-          embed_cache[insight.id] = embed_vec;
+          embed_cache[insight.id] = std::move(embed_vec);
         }
         estats = mnemon::graph_eng::on_insight_created(*db, insight, ec_ptr, rem_entity_mode);
         if (!insight.entities.empty()) {
@@ -477,11 +476,13 @@ int run_mnemon(int argc, char** argv) {
       }
       ov = *p;
     }
-    std::vector<double> qvec;
+    std::vector<float> qvec;
     mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
-    if (oc.available()) {
+    const bool embedding_available = oc.available();
+    if (embedding_available) {
       try {
         qvec = oc.embed(rec_query);
+        mnemon::normalize_vector(qvec);
       } catch (...) {
         qvec.clear();
       }
@@ -718,17 +719,18 @@ int run_mnemon(int argc, char** argv) {
   embed->callback([&] {
     auto db = open_db();
     mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
+    const bool embedding_available = oc.available();
     if (emb_status) {
       auto [tot, emb] = db->embedding_stats();
       int pct = tot > 0 ? static_cast<int>(std::lround(100.0 * static_cast<double>(emb) / static_cast<double>(tot))) : 0;
       print_json(nlohmann::json{{"total_insights", tot},
                                  {"embedded", emb},
                                  {"coverage", std::to_string(pct) + "%"},
-                                 {"ollama_available", oc.available()},
+                                 {"ollama_available", embedding_available},
                                  {"model", oc.model}});
       return;
     }
-    if (!oc.available()) {
+    if (!embedding_available) {
       throw std::runtime_error("Ollama not available at " + oc.endpoint + " — install with: brew install ollama && ollama pull " + oc.model);
     }
     if (!emb_id.empty()) {
@@ -737,7 +739,8 @@ int run_mnemon(int argc, char** argv) {
         throw std::runtime_error("insight " + emb_id + " not found");
       }
       auto vec = oc.embed(ins->content);
-      db->update_embedding(emb_id, mnemon::serialize_vector(vec));
+      mnemon::normalize_vector(vec);
+      db->update_embedding(emb_id, vec);
       db->log_op("embed", emb_id, "dim=" + std::to_string(vec.size()) + " model=" + oc.model);
       print_json(
           nlohmann::json{{"status", "embedded"}, {"id", emb_id}, {"dimension", vec.size()}, {"model", oc.model}});
@@ -755,7 +758,8 @@ int run_mnemon(int argc, char** argv) {
     for (const auto& ins : missing) {
       try {
         auto vec = oc.embed(ins.content);
-        db->update_embedding(ins.id, mnemon::serialize_vector(vec));
+        mnemon::normalize_vector(vec);
+        db->update_embedding(ins.id, vec);
         ok++;
       } catch (...) {
         bad++;

@@ -105,7 +105,7 @@ bool OllamaClient::available() const {
   return res && res->status == 200;
 }
 
-std::vector<double> OllamaClient::embed(const std::string& text) const {
+std::vector<float> OllamaClient::embed(const std::string& text) const {
   const auto parts = split_endpoint(endpoint);
 #ifndef CPPHTTPLIB_OPENSSL_SUPPORT
   if (parts.host_with_scheme.rfind("https://", 0) == 0) {
@@ -134,9 +134,10 @@ std::vector<double> OllamaClient::embed(const std::string& text) const {
   if (!arr.is_array() || arr.empty() || !arr[0].is_array()) {
     throw std::runtime_error("ollama empty embedding");
   }
-  std::vector<double> v;
+  std::vector<float> v;
+  v.reserve(arr[0].size());
   for (const auto& x : arr[0]) {
-    v.push_back(x.get<double>());
+    v.push_back(x.get<float>());
   }
   return v;
 }

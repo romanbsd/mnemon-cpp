@@ -145,21 +145,25 @@ TokenSet tokenize(std::string_view text_sv) {
 }
 
 // Max directional overlap: intersection / |A| vs intersection / |B| — asymmetric but cheap dedup signal.
-double content_similarity(std::string_view a, std::string_view b) {
-  auto ta = tokenize(a);
-  auto tb = tokenize(b);
-  if (ta.empty() || tb.empty()) {
+double content_similarity_tokens(const TokenSet& a, const TokenSet& b) {
+  if (a.empty() || b.empty()) {
     return 0;
   }
   int inter = 0;
-  for (const auto& k : ta) {
-    if (tb.count(k)) {
+  for (const auto& k : a) {
+    if (b.count(k)) {
       inter++;
     }
   }
-  double sa = static_cast<double>(inter) / static_cast<double>(ta.size());
-  double sb = static_cast<double>(inter) / static_cast<double>(tb.size());
+  double sa = static_cast<double>(inter) / static_cast<double>(a.size());
+  double sb = static_cast<double>(inter) / static_cast<double>(b.size());
   return sa > sb ? sa : sb;
+}
+
+double content_similarity(std::string_view a, std::string_view b) {
+  auto ta = tokenize(a);
+  auto tb = tokenize(b);
+  return content_similarity_tokens(ta, tb);
 }
 
 double jaccard_similarity(std::string_view a, std::string_view b) {
