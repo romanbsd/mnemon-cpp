@@ -10,10 +10,10 @@
 
 namespace mnemon::graph_eng {
 
-EdgeStats on_insight_created(Database& db, Insight& insight, EmbedCache* embed_cache) {
+EdgeStats on_insight_created(Database& db, Insight& insight, EmbedCache* embed_cache,
+                             const std::string& entity_mode) {
   EdgeStats s;
-  auto extracted = extract_entities(insight.content);
-  insight.entities = merge_entities(insight.entities, extracted);
+  insight.entities = resolve_entities(insight.content, insight.entities, entity_mode);
   s.temporal = create_temporal_edges(db, insight);
   s.entity = create_entity_edges(db, insight);
   s.causal = create_causal_edges(db, insight);

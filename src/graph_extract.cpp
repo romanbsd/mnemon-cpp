@@ -145,4 +145,20 @@ std::vector<std::string> merge_entities(const std::vector<std::string>& provided
   return merged;
 }
 
+bool valid_entity_mode(const std::string& mode) {
+  return mode == "merge" || mode == "provided" || mode == "auto";
+}
+
+std::vector<std::string> resolve_entities(std::string_view content,
+                                          const std::vector<std::string>& provided,
+                                          const std::string& mode) {
+  if (mode == "provided") {
+    return provided;
+  }
+  if (mode == "auto") {
+    return extract_entities(content);
+  }
+  return merge_entities(provided, extract_entities(content));
+}
+
 } // namespace mnemon::graph_eng
