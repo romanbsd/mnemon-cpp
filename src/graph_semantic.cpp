@@ -148,6 +148,7 @@ static std::vector<SemanticCandidate> find_by_embedding(Database& db, const Insi
 
 static std::vector<SemanticCandidate> find_by_token_overlap(Database& db, const Insight& insight) {
   auto all = db.get_all_active_insights();
+  const auto insight_tokens = search_engine::tokenize(insight.content);
   struct Sc {
     const Insight* ins;
     double sim;
@@ -157,7 +158,8 @@ static std::vector<SemanticCandidate> find_by_token_overlap(Database& db, const 
     if (other.id == insight.id) {
       continue;
     }
-    double sim = search_engine::content_similarity(insight.content, other.content);
+    const auto other_tokens = search_engine::tokenize(other.content);
+    double sim = search_engine::content_similarity_tokens(insight_tokens, other_tokens);
     if (sim >= kMinSemanticSimilarity) {
       cands.push_back({&other, sim});
     }
