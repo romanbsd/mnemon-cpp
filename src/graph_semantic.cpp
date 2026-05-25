@@ -19,9 +19,9 @@ static constexpr int kMaxAutoSemanticEdges = 3;
 
 EmbedCache build_embed_cache(Database& db) {
   EmbedCache c;
-  for (const auto& row : db.get_all_embedding_blobs()) {
-    auto v = mnemon::deserialize_vector_f32(row.embedding);
-    if (!v.empty()) {
+  for (const auto& row : db.get_all_embeddings()) {
+    if (!row.embedding.empty()) {
+      auto v = row.embedding;
       mnemon::normalize_vector(v);
       c[row.id] = std::move(v);
     }
@@ -56,7 +56,7 @@ int create_semantic_edges(Database& db, Insight& insight, EmbedCache* cache) {
     ids.push_back(id);
     vec_refs.push_back(&other_vec);
   }
-  auto sims = mnemon::cosine_similarity_many_f32(insight_vec, vec_refs);
+  auto sims = mnemon::cosine_similarity_many(insight_vec, vec_refs);
   for (size_t i = 0; i < ids.size(); ++i) {
     double cos_sim = sims[i];
     if (cos_sim >= kAutoSemanticThreshold) {
@@ -118,7 +118,7 @@ static std::vector<SemanticCandidate> find_by_embedding(Database& db, const Insi
     ids.push_back(id);
     vec_refs.push_back(&vec);
   }
-  auto sims = mnemon::cosine_similarity_many_f32(it->second, vec_refs);
+  auto sims = mnemon::cosine_similarity_many(it->second, vec_refs);
   for (size_t i = 0; i < ids.size(); ++i) {
     double cos_sim = sims[i];
     if (cos_sim >= kReviewSemanticThreshold) {

@@ -42,7 +42,7 @@ struct Edge {
 struct EmbeddedRow {
   std::string id;
   std::string content;
-  std::vector<uint8_t> embedding;
+  std::vector<float> embedding;
 };
 
 struct RetentionCandidate {

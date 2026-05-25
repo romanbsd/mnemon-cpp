@@ -89,7 +89,7 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
         cand_vecs.push_back(nullptr);
       }
     }
-    cand_cos = mnemon::cosine_similarity_many_f32(opts.new_embedding, cand_vecs);
+    cand_cos = mnemon::cosine_similarity_many(opts.new_embedding, cand_vecs);
   }
   for (size_t idx = 0; idx < candidates.size(); ++idx) {
     const auto& c = candidates[idx];
@@ -129,7 +129,7 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
       second_ids.push_back(ei.id);
       second_vecs.push_back(ei.embedding);
     }
-    auto second_cos = mnemon::cosine_similarity_many_f32(opts.new_embedding, second_vecs);
+    auto second_cos = mnemon::cosine_similarity_many(opts.new_embedding, second_vecs);
     for (size_t i = 0; i < second_ids.size(); ++i) {
       double cs = second_cos[i];
       if (cs >= 0.85) {

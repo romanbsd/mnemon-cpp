@@ -5,6 +5,7 @@
 
 #include "model_json.hpp"
 #include "time_util.hpp"
+#include "vector_math.hpp"
 
 #include <sqlite3.h>
 
@@ -878,7 +879,8 @@ InsightStats Database::get_stats() {
   return s;
 }
 
-void Database::update_embedding(const std::string& id, const std::vector<uint8_t>& blob) {
+void Database::update_embedding(const std::string& id, const std::vector<float>& v) {
+  auto blob = mnemon::serialize_vector(v);
   Statement st(db_, "UPDATE insights SET embedding = ?, updated_at = ? WHERE id = ?");
   st.bind_blob(1, blob.data(), blob.size());
   st.bind_text(2, time_util::rfc3339_utc(time_util::now_utc()));
@@ -886,7 +888,7 @@ void Database::update_embedding(const std::string& id, const std::vector<uint8_t
   st.step();
 }
 
-std::vector<uint8_t> Database::get_embedding(const std::string& id) {
+std::vector<float> Database::get_embedding(const std::string& id) {
   Statement st(db_, "SELECT embedding FROM insights WHERE id = ? AND deleted_at IS NULL");
   st.bind_text(1, id);
   if (!st.step()) {
@@ -897,29 +899,10 @@ std::vector<uint8_t> Database::get_embedding(const std::string& id) {
   }
   const void* p = st.column_blob(0);
   int n = st.column_bytes(0);
-  return std::vector<uint8_t>(static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n);
+  return mnemon::deserialize_vector(p, static_cast<size_t>(n));
 }
 
 std::vector<EmbeddedRow> Database::get_all_embeddings() {
-  Statement st(db_, "SELECT id, content, embedding FROM insights WHERE deleted_at IS NULL AND embedding IS NOT NULL");
-  std::vector<EmbeddedRow> out;
-  while (st.step()) {
-    EmbeddedRow r;
-    r.id = st.column_text(0);
-    r.content = st.column_text(1);
-    if (!st.column_null(2)) {
-      const void* p = st.column_blob(2);
-      int n = st.column_bytes(2);
-      r.embedding.assign(static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n);
-    }
-    if (!r.embedding.empty()) {
-      out.push_back(std::move(r));
-    }
-  }
-  return out;
-}
-
-std::vector<EmbeddedRow> Database::get_all_embedding_blobs() {
   Statement st(db_, "SELECT id, embedding FROM insights WHERE deleted_at IS NULL AND embedding IS NOT NULL");
   std::vector<EmbeddedRow> out;
   while (st.step()) {
@@ -928,7 +911,7 @@ std::vector<EmbeddedRow> Database::get_all_embedding_blobs() {
     if (!st.column_null(1)) {
       const void* p = st.column_blob(1);
       int n = st.column_bytes(1);
-      r.embedding.assign(static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + n);
+      r.embedding = mnemon::deserialize_vector(p, static_cast<size_t>(n));
     }
     if (!r.embedding.empty()) {
       out.push_back(std::move(r));

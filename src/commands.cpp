@@ -273,15 +273,12 @@ int run_mnemon(int argc, char** argv) {
     mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
     const bool embedding_available = oc.available();
     std::vector<float> embed_vec;
-    std::vector<uint8_t> embed_blob;
     if (embedding_available) {
       try {
-        embed_vec = mnemon::to_float_vector(oc.embed(rem_content));
+        embed_vec = oc.embed(rem_content);
         mnemon::normalize_vector(embed_vec);
-        embed_blob = mnemon::serialize_vector(embed_vec);
       } catch (...) {
         embed_vec.clear();
-        embed_blob.clear();
       }
     }
 
@@ -364,8 +361,8 @@ int run_mnemon(int argc, char** argv) {
           }
         }
         db->insert_insight(insight);
-        if (!embed_blob.empty()) {
-          db->update_embedding(insight.id, embed_blob);
+        if (!embed_vec.empty()) {
+          db->update_embedding(insight.id, embed_vec);
           embedded = true;
           embed_cache[insight.id] = embed_vec;
         }
@@ -484,7 +481,7 @@ int run_mnemon(int argc, char** argv) {
     const bool embedding_available = oc.available();
     if (embedding_available) {
       try {
-        qvec = mnemon::to_float_vector(oc.embed(rec_query));
+        qvec = oc.embed(rec_query);
         mnemon::normalize_vector(qvec);
       } catch (...) {
         qvec.clear();
@@ -741,9 +738,9 @@ int run_mnemon(int argc, char** argv) {
       if (!ins) {
         throw std::runtime_error("insight " + emb_id + " not found");
       }
-      auto vec = mnemon::to_float_vector(oc.embed(ins->content));
+      auto vec = oc.embed(ins->content);
       mnemon::normalize_vector(vec);
-      db->update_embedding(emb_id, mnemon::serialize_vector(vec));
+      db->update_embedding(emb_id, vec);
       db->log_op("embed", emb_id, "dim=" + std::to_string(vec.size()) + " model=" + oc.model);
       print_json(
           nlohmann::json{{"status", "embedded"}, {"id", emb_id}, {"dimension", vec.size()}, {"model", oc.model}});
@@ -760,9 +757,9 @@ int run_mnemon(int argc, char** argv) {
     int ok = 0, bad = 0;
     for (const auto& ins : missing) {
       try {
-        auto vec = mnemon::to_float_vector(oc.embed(ins.content));
+        auto vec = oc.embed(ins.content);
         mnemon::normalize_vector(vec);
-        db->update_embedding(ins.id, mnemon::serialize_vector(vec));
+        db->update_embedding(ins.id, vec);
         ok++;
       } catch (...) {
         bad++;

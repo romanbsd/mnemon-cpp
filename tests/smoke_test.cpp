@@ -139,22 +139,6 @@ TEST_CASE("tokenize preserves non-BMP UTF-8 tokens") {
 // placeholder to keep the binary alive before any other tests are added
 TEST_CASE("placeholder") { REQUIRE(true); }
 
-TEST_CASE("cosine_similarity_many matches single cosine behavior") {
-  const std::vector<double> q{1.0, 2.0, 3.0};
-  const std::vector<double> a{1.0, 2.0, 3.0};
-  const std::vector<double> b{3.0, 2.0, 1.0};
-  const std::vector<double> z{0.0, 0.0, 0.0};
-  const std::vector<double> bad{1.0, 2.0};
-  const std::vector<const std::vector<double>*> many{&a, &b, &z, &bad};
-
-  const auto sims = mnemon::cosine_similarity_many(q, many);
-  REQUIRE(sims.size() == many.size());
-  REQUIRE(sims[0] == Catch::Approx(mnemon::cosine_similarity(q, a)));
-  REQUIRE(sims[1] == Catch::Approx(mnemon::cosine_similarity(q, b)));
-  REQUIRE(sims[2] == Catch::Approx(0.0));
-  REQUIRE(sims[3] == Catch::Approx(0.0));
-}
-
 TEST_CASE("float runtime vectors serialize as compatible float64 blobs") {
   std::vector<float> runtime{3.0f, 4.0f};
   mnemon::normalize_vector(runtime);
@@ -162,18 +146,18 @@ TEST_CASE("float runtime vectors serialize as compatible float64 blobs") {
   const auto blob = mnemon::serialize_vector(runtime);
   REQUIRE(blob.size() == runtime.size() * sizeof(double));
 
-  const auto compat = mnemon::deserialize_vector(blob);
+  const auto compat = mnemon::deserialize_vector_double(blob);
   REQUIRE(compat.size() == runtime.size());
   REQUIRE(compat[0] == Catch::Approx(0.6));
   REQUIRE(compat[1] == Catch::Approx(0.8));
 
-  const auto restored = mnemon::deserialize_vector_f32(blob);
+  const auto restored = mnemon::deserialize_vector(blob);
   REQUIRE(restored.size() == runtime.size());
   REQUIRE(restored[0] == Catch::Approx(runtime[0]));
   REQUIRE(restored[1] == Catch::Approx(runtime[1]));
 }
 
-TEST_CASE("cosine_similarity_many_f32 matches single cosine behavior") {
+TEST_CASE("cosine_similarity_many matches single cosine behavior") {
   const std::vector<float> q{1.0f, 2.0f, 3.0f};
   const std::vector<float> a{1.0f, 2.0f, 3.0f};
   const std::vector<float> b{3.0f, 2.0f, 1.0f};
@@ -181,10 +165,10 @@ TEST_CASE("cosine_similarity_many_f32 matches single cosine behavior") {
   const std::vector<float> bad{1.0f, 2.0f};
   const std::vector<const std::vector<float>*> many{&a, &b, &z, &bad};
 
-  const auto sims = mnemon::cosine_similarity_many_f32(q, many);
+  const auto sims = mnemon::cosine_similarity_many(q, many);
   REQUIRE(sims.size() == many.size());
-  REQUIRE(sims[0] == Catch::Approx(mnemon::cosine_similarity_f32(q, a)));
-  REQUIRE(sims[1] == Catch::Approx(mnemon::cosine_similarity_f32(q, b)));
+  REQUIRE(sims[0] == Catch::Approx(mnemon::cosine_similarity(q, a)));
+  REQUIRE(sims[1] == Catch::Approx(mnemon::cosine_similarity(q, b)));
   REQUIRE(sims[2] == Catch::Approx(0.0f));
   REQUIRE(sims[3] == Catch::Approx(0.0f));
 }

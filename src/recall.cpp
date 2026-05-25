@@ -90,7 +90,7 @@ std::vector<VecHit> vector_search_from_cache(const std::unordered_map<std::strin
     vec_refs.push_back(&vec);
   }
 
-  auto sims = mnemon::cosine_similarity_many_f32(query_vec, vec_refs);
+  auto sims = mnemon::cosine_similarity_many(query_vec, vec_refs);
   for (size_t i = 0; i < ids.size(); ++i) {
     double sim = sims[i];
     if (sim <= 0.1) { // same cutoff as semantic edge builder noise floor
@@ -150,7 +150,7 @@ void beam_search_from_anchor(Database& db, const std::string& start_id, double s
         if (!query_vec.empty() && embed_cache) {
           auto nit = embed_cache->find(neighbor);
           if (nit != embed_cache->end()) {
-            double cos_sim = mnemon::cosine_similarity_f32(query_vec, nit->second);
+            double cos_sim = mnemon::cosine_similarity(query_vec, nit->second);
             if (cos_sim > 0) {
               semantic = cos_sim;
             }
@@ -265,9 +265,9 @@ RecallResponse intent_aware_recall(Database& db, std::string_view query, const s
   std::unordered_map<std::string, std::vector<float>> embed_cache;
   bool has_embeddings = false;
   if (!query_vec.empty()) {
-    for (const auto& row : db.get_all_embedding_blobs()) {
-      auto v = mnemon::deserialize_vector_f32(row.embedding);
-      if (!v.empty()) {
+    for (const auto& row : db.get_all_embeddings()) {
+      if (!row.embedding.empty()) {
+        auto v = row.embedding;
         mnemon::normalize_vector(v);
         embed_cache[row.id] = std::move(v);
       }
@@ -427,7 +427,7 @@ RecallResponse intent_aware_recall(Database& db, std::string_view query, const s
     if (has_embeddings) {
       auto vit = embed_cache.find(c.id);
       if (vit != embed_cache.end()) {
-        double sim = mnemon::cosine_similarity_f32(query_vec, vit->second);
+        double sim = mnemon::cosine_similarity(query_vec, vit->second);
         if (sim > 0) {
           c.sim = sim;
         }
