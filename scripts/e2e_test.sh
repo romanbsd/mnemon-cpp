@@ -185,6 +185,23 @@ step "store set — reject nonexistent"
 OUT=$($M --data-dir "$STORE_DIR" store set nonexistent 2>&1 || true)
 assert_contains "rejects missing" "$OUT" "does not exist"
 
+step "store set — reject invalid name"
+OUT=$($M --data-dir "$STORE_DIR" store set "../outside" 2>&1 || true)
+assert_contains "store set rejects invalid" "$OUT" "invalid store name"
+
+step "store remove — reject invalid name"
+OUT=$($M --data-dir "$STORE_DIR" store remove "../outside" 2>&1 || true)
+assert_contains "store remove rejects invalid" "$OUT" "invalid store name"
+
+step "MNEMON_STORE invalid — openDB rejects"
+OUT=$(MNEMON_STORE="../outside" $M --data-dir "$STORE_DIR" status 2>&1 || true)
+assert_contains "env invalid store rejected" "$OUT" "invalid store name"
+
+step "store list — filters invalid directory names"
+mkdir -p "$STORE_DIR/data/.hidden"
+OUT=$($M --data-dir "$STORE_DIR" store list)
+assert_not_contains "list filters .hidden" "$OUT" ".hidden"
+
 step "store remove — cannot remove active store"
 OUT=$($M --data-dir "$STORE_DIR" store remove work 2>&1 || true)
 assert_contains "rejects active removal" "$OUT" "cannot remove the active store"
@@ -211,20 +228,19 @@ step "MNEMON_STORE env — overrides active file"
 OUT=$(MNEMON_STORE=default $M --data-dir "$STORE_DIR" status)
 assert_contains "env override db path" "$OUT" "data/default/mnemon.db"
 
-step "migration — moves legacy DB to data/default/"
+step "migration — moves legacy DB + WAL/SHM sidecars to data/default/"
 MIGRATE_DIR="$TESTDATA/migrate_test"
-mkdir -p "$MIGRATE_DIR"
-# Create legacy-layout DB
-$M --data-dir "$MIGRATE_DIR" remember --no-diff "legacy insight" --cat fact --imp 3 > /dev/null 2>&1 || true
-# Force migration by removing data dir if it was auto-created
-if [ -d "$MIGRATE_DIR/data" ]; then
-  # The openDB already created data layout — test is moot, skip
-  pass "migration" "(auto-migrated by openDB)"
-else
-  # Legacy mnemon.db should exist
-  OUT=$($M --data-dir "$MIGRATE_DIR" status)
-  assert_contains "migrated db path" "$OUT" "data/default/mnemon.db"
-fi
+rm -rf "$MIGRATE_DIR" && mkdir -p "$MIGRATE_DIR"
+# Create a valid legacy-layout SQLite DB and fake sidecar files
+sqlite3 "$MIGRATE_DIR/mnemon.db" "CREATE TABLE IF NOT EXISTS insights (id TEXT PRIMARY KEY);"
+printf 'fake-wal' > "$MIGRATE_DIR/mnemon.db-wal"
+printf 'fake-shm' > "$MIGRATE_DIR/mnemon.db-shm"
+# Trigger migration (any command that calls open_db); SQLite may clean up WAL on close
+$M --data-dir "$MIGRATE_DIR" status > /dev/null 2>&1 || true
+assert_contains "db migrated" "$(ls "$MIGRATE_DIR/data/default/" 2>/dev/null)" "mnemon.db"
+# WAL/SHM should no longer be at the root after migration (moved or cleaned up by SQLite)
+if [ -f "$MIGRATE_DIR/mnemon.db-wal" ]; then fail "legacy wal gone" "(should not remain at root)"; else pass "legacy wal gone" "(absent from root)"; fi
+if [ -f "$MIGRATE_DIR/mnemon.db-shm" ]; then fail "legacy shm gone" "(should not remain at root)"; else pass "legacy shm gone" "(absent from root)"; fi
 
 # ══════════════════════════════════════════════════════════════════════
 banner "Milestone 1: Basic CRUD"
@@ -745,6 +761,24 @@ echo -e "    ${DIM}entities: $(echo "$OUT" | jq -c '.entities')${RESET}"
 assert_contains "dict entity: Python" "$OUT" '"Python"'
 assert_contains "dict entity: FastAPI" "$OUT" '"FastAPI"'
 
+step "--entity-mode provided — only LLM-provided entities are used"
+OUT=$($M --data-dir "$TESTDIR9" remember --no-diff "We deploy HttpServer on Docker with Redis" --cat fact --imp 3 --entities "strict-entity" --entity-mode provided 2>&1 || true)
+echo -e "    ${DIM}entities: $(echo "$OUT" | jq -c '.entities' 2>/dev/null)${RESET}"
+assert_contains "provided entity present" "$OUT" '"strict-entity"'
+assert_not_contains "regex entity omitted in provided mode" "$OUT" '"HttpServer"'
+assert_not_contains "dict entity omitted in provided mode" "$OUT" '"Docker"'
+
+step "--entity-mode auto — ignores LLM-provided entities"
+OUT=$($M --data-dir "$TESTDIR9" remember --no-diff "We deploy HttpServer on Docker with Redis" --cat fact --imp 3 --entities "ignored-entity" --entity-mode auto 2>&1 || true)
+echo -e "    ${DIM}entities: $(echo "$OUT" | jq -c '.entities' 2>/dev/null)${RESET}"
+assert_not_contains "provided entity ignored in auto mode" "$OUT" '"ignored-entity"'
+assert_contains "regex entity present in auto mode" "$OUT" '"HttpServer"'
+assert_contains "dict entity present in auto mode" "$OUT" '"Docker"'
+
+step "--entity-mode invalid — rejects unknown modes"
+OUT=$($M --data-dir "$TESTDIR9" remember --no-diff "test" --cat fact --imp 3 --entity-mode bogus 2>&1 || true)
+assert_contains "invalid entity mode rejected" "$OUT" "invalid entity mode"
+
 # ══════════════════════════════════════════════════════════════════════
 banner "Milestone 10: Auto-Prune Lifecycle"
 # ══════════════════════════════════════════════════════════════════════
@@ -819,6 +853,147 @@ assert_jq_gte "anchor_count >= 1" "$OUT" '.meta.anchor_count' '1'
 step "smart recall — invalid intent rejected"
 OUT=$($M --data-dir "$TESTDIR3" recall "test" --smart --intent INVALID 2>&1 || true)
 assert_contains "rejects invalid intent" "$OUT" "unknown intent"
+
+# ══════════════════════════════════════════════════════════════════════
+banner "Input Validation: limit flags"
+# ══════════════════════════════════════════════════════════════════════
+
+VALDIR="$TESTDATA/val_test"
+mkdir -p "$VALDIR"
+$M --data-dir "$VALDIR" remember --no-diff "validation test insight" --cat fact --imp 3 > /dev/null
+
+step "recall — rejects --limit 0"
+OUT=$($M --data-dir "$VALDIR" recall "test" --limit 0 2>&1 || true)
+assert_contains "recall limit 0 rejected" "$OUT" "must be at least 1"
+
+step "search — rejects --limit 0"
+OUT=$($M --data-dir "$VALDIR" search "test" --limit 0 2>&1 || true)
+assert_contains "search limit 0 rejected" "$OUT" "must be at least 1"
+
+step "log — rejects --limit 0"
+OUT=$($M --data-dir "$VALDIR" log --limit 0 2>&1 || true)
+assert_contains "log limit 0 rejected" "$OUT" "must be at least 1"
+
+step "gc — rejects --limit 0"
+OUT=$($M --data-dir "$VALDIR" gc --limit 0 2>&1 || true)
+assert_contains "gc limit 0 rejected" "$OUT" "must be at least 1"
+
+step "gc — rejects negative --threshold"
+OUT=$($M --data-dir "$VALDIR" gc --threshold -0.1 2>&1 || true)
+assert_contains "gc threshold negative rejected" "$OUT" "must be non-negative"
+
+# ══════════════════════════════════════════════════════════════════════
+banner "Setup: Nanobot target validation"
+# ══════════════════════════════════════════════════════════════════════
+
+SETUPDIR="$TESTDATA/setup_nanobot"
+mkdir -p "$SETUPDIR"
+
+step "setup --target nanobot --yes — accepted (installs skill)"
+OUT=$($M --data-dir "$SETUPDIR" setup --target nanobot --yes 2>&1 || true)
+assert_contains "nanobot target accepted" "$OUT" "Skill"
+
+step "setup --target bogus — still rejected"
+OUT=$($M --data-dir "$SETUPDIR" setup --target bogus 2>&1 || true)
+assert_contains "bogus target rejected" "$OUT" "invalid target"
+
+step "setup --target bogus error mentions nanobot"
+assert_contains "error mentions nanobot" "$OUT" "nanobot"
+
+step "setup --target codex --yes — accepted (installs skill)"
+OUT=$($M --data-dir "$SETUPDIR" setup --target codex --yes 2>&1 || true)
+assert_contains "codex target accepted" "$OUT" "Skill"
+
+step "setup --target bogus error mentions codex"
+OUT=$($M --data-dir "$SETUPDIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions codex" "$OUT" "codex"
+
+# ══════════════════════════════════════════════════════════════════════
+banner "Setup eject: markdown cleanup"
+# ══════════════════════════════════════════════════════════════════════
+
+EJECT_DIR="$TESTDATA/eject_test"
+mkdir -p "$EJECT_DIR/.claude"
+
+step "eject — removes mnemon block even when stale end-marker precedes start-marker"
+# This tests the fix for: end_idx was searched from pos 0, so a <!-- mnemon:end -->
+# fragment appearing BEFORE <!-- mnemon:start --> caused the wrong range to be found
+# and the block was left intact.
+cat > "$EJECT_DIR/CLAUDE.md" << 'MDEOF'
+# My Project
+
+Some text <!-- mnemon:end --> in passing.
+
+<!-- mnemon:start -->
+## Mnemon Memory Guidance
+Instructions for agent.
+<!-- mnemon:end -->
+
+## Development Notes
+
+Keep going.
+MDEOF
+
+(cd "$EJECT_DIR" && $M setup --eject --yes 2>&1 || true)
+EJECT_MD=$(cat "$EJECT_DIR/CLAUDE.md" 2>/dev/null || echo "FILE_DELETED")
+assert_not_contains "removed start marker" "$EJECT_MD" "mnemon:start"
+assert_contains "preserved pre-block content" "$EJECT_MD" "My Project"
+assert_contains "preserved post-block content" "$EJECT_MD" "Development Notes"
+
+step "eject — no triple newlines after removing sandwiched block"
+cat > "$EJECT_DIR/CLAUDE.md" << 'MDEOF'
+# Header
+
+Content before.
+
+<!-- mnemon:start -->
+Guidance.
+<!-- mnemon:end -->
+
+Content after.
+MDEOF
+
+(cd "$EJECT_DIR" && $M setup --eject --yes 2>&1 || true)
+EJECT_MD2=$(cat "$EJECT_DIR/CLAUDE.md" 2>/dev/null || echo "FILE_DELETED")
+# $(printf '\n\n\n') is stripped by command substitution; detect via awk instead
+CONSEC_BLANKS=$(awk '/^$/{c++; if(c>=2){found=1;exit}} !/^$/{c=0} END{print found+0}' "$EJECT_DIR/CLAUDE.md" 2>/dev/null || echo "0")
+if [ "$CONSEC_BLANKS" = "0" ]; then pass "no triple newlines" "(absent: consecutive blank lines)"; else fail "no triple newlines" "(should NOT contain: consecutive blank lines)"; fi
+assert_contains "preserved header" "$EJECT_MD2" "Header"
+assert_contains "preserved content" "$EJECT_MD2" "Content after"
+
+banner "Milestone 12: --embed-model Flag"
+EMBEDMODEL_DIR="$TESTDATA/embed_model"
+mkdir -p "$EMBEDMODEL_DIR"
+
+step "--embed-model flag is accepted (no error)"
+OUT=$($M --data-dir "$EMBEDMODEL_DIR" --embed-model nomic-embed-text embed --status 2>&1)
+assert_contains "embed-model flag accepted" "$OUT" "ollama_available"
+
+step "--embed-model overrides MNEMON_EMBED_MODEL env var"
+OUT=$(MNEMON_EMBED_MODEL="env-model" $M --data-dir "$EMBEDMODEL_DIR" --embed-model "flag-model" embed --status 2>&1)
+assert_contains "embed-model flag overrides env" "$OUT" "ollama_available"
+
+banner "Milestone 13: Privacy-Safe Memory Receipts"
+RECEIPT_DIR="$TESTDATA/receipt"
+mkdir -p "$RECEIPT_DIR"
+
+step "receipt — empty oplog returns valid JSON receipt"
+OUT=$($M --data-dir "$RECEIPT_DIR" receipt 2>&1)
+assert_jq "receipt schema" "$OUT" '.schema' 'mnemon.memory.receipt.v1'
+assert_jq "receipt privacy raw_detail_included false" "$OUT" '.privacy.raw_detail_included' 'false'
+assert_jq "receipt count 0" "$OUT" '.count' '0'
+
+step "receipt — after remember, receipt omits raw content"
+$M --data-dir "$RECEIPT_DIR" remember "secret sauce recipe" --cat fact --imp 3 > /dev/null
+OUT=$($M --data-dir "$RECEIPT_DIR" receipt 2>&1)
+assert_jq "receipt count 1" "$OUT" '.count' '1'
+assert_jq "receipt event name" "$OUT" '.events[0].event_name' 'mnemon.memory.operation.observed'
+assert_jq "receipt no raw content" "$OUT" 'any(.events[]; has("content"))' 'false'
+assert_jq "receipt has detail_present" "$OUT" '.events[0].detail_present' 'true'
+
+step "receipt --limit controls max events"
+OUT=$($M --data-dir "$RECEIPT_DIR" receipt --limit 1 2>&1)
+assert_jq "receipt limit respected" "$OUT" '.events | length' '1'
 
 # ── Report ────────────────────────────────────────────────────────────
 echo ""

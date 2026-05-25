@@ -498,8 +498,58 @@ static Environment detect_openclaw(bool global) {
   return env;
 }
 
+static Environment detect_codex(bool global) {
+  Environment env;
+  env.name = "codex";
+  env.display = "Codex";
+  fs::path global_dir = fs::path(home_dir()) / ".codex";
+  std::string local_dir = ".codex";
+  env.config_dir = global ? global_dir.string() : local_dir;
+
+  std::string bin;
+  if (look_path("codex", bin)) {
+    env.detected = true;
+    env.bin_path = bin;
+    env.version = exec_version(bin);
+  }
+  std::error_code ec;
+  if (fs::exists(global_dir, ec)) {
+    env.detected = true;
+  }
+  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
+  if (fs::exists(skill, ec)) {
+    env.installed = true;
+  }
+  return env;
+}
+
+static Environment detect_nanobot(bool global) {
+  Environment env;
+  env.name = "nanobot";
+  env.display = "Nanobot";
+  fs::path global_dir = fs::path(home_dir()) / ".nanobot" / "workspace";
+  std::string local_dir = ".nanobot";
+  env.config_dir = global ? global_dir.string() : local_dir;
+
+  std::string bin;
+  if (look_path("nanobot", bin)) {
+    env.detected = true;
+    env.bin_path = bin;
+    env.version = exec_version(bin);
+  }
+  std::error_code ec;
+  if (fs::exists(global_dir, ec)) {
+    env.detected = true;
+  }
+  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
+  if (fs::exists(skill, ec)) {
+    env.installed = true;
+  }
+  return env;
+}
+
 static std::vector<Environment> detect_environments(bool global) {
-  return {detect_claude(global), detect_openclaw(global)};
+  return {detect_claude(global), detect_codex(global), detect_openclaw(global), detect_nanobot(global)};
 }
 
 // --- install pieces ---
@@ -624,18 +674,32 @@ static bool eject_memory_block(const fs::path& file_path) {
   if (start_idx == std::string::npos) {
     return false;
   }
-  size_t end_idx = s.find(kEnd);
-  if (end_idx == std::string::npos) {
+  // Search for end marker AFTER the start marker to avoid false matches
+  size_t end_rel = s.find(kEnd, start_idx + kStart.size());
+  if (end_rel == std::string::npos) {
     return false;
   }
-  end_idx += kEnd.size();
+  size_t end_idx = end_rel + kEnd.size();
+
+  bool removed_leading = false;
+  bool removed_trailing = false;
   if (start_idx > 0 && s[start_idx - 1] == '\n') {
     --start_idx;
+    removed_leading = true;
   }
   if (end_idx < s.size() && s[end_idx] == '\n') {
     ++end_idx;
+    removed_trailing = true;
   }
   std::string result = s.substr(0, start_idx) + s.substr(end_idx);
+  if (removed_leading && removed_trailing && start_idx > 0 && end_idx < s.size()) {
+    result = s.substr(0, start_idx) + "\n" + s.substr(end_idx);
+  }
+  // Collapse triple newlines (can appear when block was surrounded by blank lines)
+  while (result.find("\n\n\n") != std::string::npos) {
+    size_t p = result.find("\n\n\n");
+    result.replace(p, 3, "\n\n");
+  }
   // trim space like Go strings.TrimSpace
   size_t a = result.find_first_not_of(" \t\n\r");
   if (a == std::string::npos) {
@@ -645,7 +709,13 @@ static bool eject_memory_block(const fs::path& file_path) {
   size_t b = result.find_last_not_of(" \t\n\r");
   result = result.substr(a, b - a + 1);
   result.push_back('\n');
-  write_bytes(file_path, result, 0644);
+  // Write directly (file already exists; don't attempt to create parent dirs)
+  std::ofstream out(file_path, std::ios::binary | std::ios::trunc);
+  if (!out) {
+    throw std::runtime_error("write " + file_path.string());
+  }
+  out.write(result.data(), static_cast<std::streamsize>(result.size()));
+  chmod_path(file_path, 0644);
   return true;
 }
 
@@ -669,6 +739,11 @@ static void eject_markdown(const std::string& file_path, const std::string& prom
       }
     }
   }
+}
+
+static void eject_local_markdown(bool yes) {
+  eject_markdown("CLAUDE.md", "Remove memory guidance from ./CLAUDE.md?", yes);
+  eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
 }
 
 static int claude_eject(const std::string& config_dir, bool yes) {
@@ -712,6 +787,74 @@ static int claude_eject(const std::string& config_dir, bool yes) {
   return errs;
 }
 
+// remove_openclaw_plugin_entry removes the "mnemon" entry from openclaw.json's
+// plugins.entries. Deletes the file entirely if it becomes empty. Returns an
+// error string on failure, empty on success (including file-not-found).
+static std::string remove_openclaw_plugin_entry(const fs::path& cfg_path) {
+  std::error_code ec;
+  if (!fs::exists(cfg_path, ec)) {
+    return "";
+  }
+  std::ifstream in(cfg_path);
+  if (!in) {
+    return "open " + cfg_path.string() + ": read error";
+  }
+  std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  nlohmann::json cfg;
+  try {
+    cfg = nlohmann::json::parse(raw);
+  } catch (const std::exception& e) {
+    return "parse openclaw.json: " + std::string(e.what());
+  }
+
+  if (!cfg.contains("plugins") || !cfg["plugins"].is_object()) {
+    return "";
+  }
+  auto& plugins = cfg["plugins"];
+  if (!plugins.contains("entries") || !plugins["entries"].is_object()) {
+    return "";
+  }
+  auto& entries = plugins["entries"];
+  if (!entries.contains("mnemon")) {
+    return "";
+  }
+  entries.erase("mnemon");
+  if (entries.empty()) {
+    plugins.erase("entries");
+  }
+  if (plugins.empty()) {
+    cfg.erase("plugins");
+  }
+
+  if (cfg.empty()) {
+    ec.clear();
+    fs::remove(cfg_path, ec);
+    if (ec) {
+      return "remove " + cfg_path.string() + ": " + ec.message();
+    }
+    return "";
+  }
+
+  std::string out = cfg.dump(2);
+  out.push_back('\n');
+  fs::path tmp = cfg_path;
+  tmp += ".tmp";
+  {
+    std::ofstream o(tmp, std::ios::trunc);
+    if (!o) {
+      return "write " + tmp.string() + ": open error";
+    }
+    o << out;
+  }
+  ec.clear();
+  fs::rename(tmp, cfg_path, ec);
+  if (ec) {
+    return "rename " + tmp.string() + ": " + ec.message();
+  }
+  chmod_path(cfg_path, 0600);
+  return "";
+}
+
 static int openclaw_eject(const std::string& config_dir, bool yes) {
   std::cout << "\nRemoving OpenClaw integration (" << config_dir << ")...\n";
   int errs = 0;
@@ -738,32 +881,273 @@ static int openclaw_eject(const std::string& config_dir, bool yes) {
   remove_if_empty_dir(fs::path(config_dir) / "extensions");
 
   fs::path cfg_path = fs::path(config_dir) / "openclaw.json";
-  if (fs::exists(cfg_path)) {
-    try {
-      std::ifstream in(cfg_path);
-      std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-      nlohmann::json cfg = nlohmann::json::parse(raw);
-      if (cfg.contains("plugins") && cfg["plugins"].is_object() && cfg["plugins"].contains("entries") &&
-          cfg["plugins"]["entries"].is_object()) {
-        cfg["plugins"]["entries"].erase("mnemon");
-        std::string out = cfg.dump(2);
-        out.push_back('\n');
-        fs::path tmp = cfg_path;
-        tmp += ".tmp";
-        {
-          std::ofstream o(tmp, std::ios::trunc);
-          o << out;
-        }
-        fs::rename(tmp, cfg_path);
-        chmod_path(cfg_path, 0600);
-      }
-    } catch (...) {
-      // best-effort
-    }
+  if (std::string err = remove_openclaw_plugin_entry(cfg_path); !err.empty()) {
+    status_error("Config", err);
+    ++errs;
   }
+
   remove_if_empty_dir(config_dir);
   eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
   return errs;
+}
+
+// --- nanobot ---
+
+static fs::path nanobot_write_skill(const std::string& config_dir) {
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  fs::create_directories(skill_dir);
+  fs::path p = skill_dir / "SKILL.md";
+  write_bytes(p, mnemon::embedded::nanobot_SKILL_md(), 0644);
+  return p;
+}
+
+static int nanobot_eject(const std::string& config_dir) {
+  int errs = 0;
+  std::cout << "\nRemoving Nanobot integration (" << config_dir << ")...\n";
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  std::error_code ec;
+  fs::remove_all(skill_dir, ec);
+  if (ec) {
+    status_error("Skill", "remove failed: " + ec.message());
+    ++errs;
+  } else {
+    status_ok("Skill", skill_dir.string() + " removed");
+  }
+  remove_if_empty_dir((fs::path(config_dir) / "skills").string());
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
+static bool install_nanobot(Environment env, bool global, bool setup_yes) {
+  std::string config_dir = env.config_dir;
+  if (!global && !setup_yes && is_tty_in()) {
+    std::string local_dir = ".nanobot";
+    std::string global_dir = (fs::path(home_dir()) / ".nanobot" / "workspace").string();
+    size_t idx = select_one("Install scope", {
+        "Global -- all projects (" + global_dir + "/)",
+        "Local  -- this project only (" + local_dir + "/)",
+    }, 0);
+    config_dir = (idx == 1) ? local_dir : global_dir;
+  }
+  std::cout << "\nSetting up Nanobot (" << config_dir << ")...\n";
+  std::cout << "\n[1/2] Skill\n";
+  try {
+    auto p = nanobot_write_skill(config_dir);
+    status_ok("Skill", p.string());
+  } catch (const std::exception& e) {
+    status_error("Skill", e.what());
+    return false;
+  }
+  std::cout << "\n[2/2] Prompts\n";
+  try {
+    auto p = write_prompt_files();
+    status_ok("Prompts", p.string());
+  } catch (const std::exception& e) {
+    status_error("Prompts", e.what());
+    return false;
+  }
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Prompts ~/.mnemon/prompt/ (guide.md, skill.md)\n";
+  std::cout << "\nRestart Nanobot to activate the mnemon skill.\n";
+  std::cout << "Edit ~/.mnemon/prompt/guide.md to customize behavior.\n";
+  std::cout << "Run 'mnemon setup --eject' to remove.\n";
+  return true;
+}
+
+// --- codex ---
+
+static void remove_codex_hooks(nlohmann::json& data) {
+  if (!data.contains("hooks") || !data["hooks"].is_object()) {
+    return;
+  }
+  auto& hooks = data["hooks"];
+  static const char* keys[] = {"SessionStart", "UserPromptSubmit", "Stop"};
+  for (const char* key : keys) {
+    if (!hooks.contains(key)) {
+      continue;
+    }
+    nlohmann::json filtered = filter_hook_array(hooks[key]);
+    if (filtered.empty()) {
+      hooks.erase(key);
+    } else {
+      hooks[key] = filtered;
+    }
+  }
+  if (hooks.empty()) {
+    data.erase("hooks");
+  }
+}
+
+static void add_codex_hooks(nlohmann::json& data, const std::string& hooks_dir) {
+  remove_codex_hooks(data);
+  if (!data.contains("hooks") || !data["hooks"].is_object()) {
+    data["hooks"] = nlohmann::json::object();
+  }
+  auto& hooks = data["hooks"];
+  fs::path hd = hooks_dir;
+
+  auto prime_entry = nlohmann::json::object();
+  prime_entry["matcher"] = "startup|resume|clear";
+  prime_entry["hooks"] = nlohmann::json::array(
+      {{{"type", "command"}, {"command", (hd / "prime.sh").string()}, {"timeout", 30}, {"statusMessage", "Loading Mnemon context"}}});
+  if (!hooks.contains("SessionStart")) {
+    hooks["SessionStart"] = nlohmann::json::array();
+  }
+  hooks["SessionStart"].push_back(prime_entry);
+
+  auto remind_entry = nlohmann::json::object();
+  remind_entry["hooks"] = nlohmann::json::array(
+      {{{"type", "command"}, {"command", (hd / "user_prompt.sh").string()}, {"timeout", 30}, {"statusMessage", "Checking Mnemon recall guidance"}}});
+  if (!hooks.contains("UserPromptSubmit")) {
+    hooks["UserPromptSubmit"] = nlohmann::json::array();
+  }
+  hooks["UserPromptSubmit"].push_back(remind_entry);
+
+  auto stop_entry = nlohmann::json::object();
+  stop_entry["hooks"] = nlohmann::json::array(
+      {{{"type", "command"}, {"command", (hd / "stop.sh").string()}, {"timeout", 30}, {"statusMessage", "Checking Mnemon writeback guidance"}}});
+  if (!hooks.contains("Stop")) {
+    hooks["Stop"] = nlohmann::json::array();
+  }
+  hooks["Stop"].push_back(stop_entry);
+}
+
+static fs::path codex_write_skill(const std::string& config_dir) {
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  fs::create_directories(skill_dir);
+  fs::path p = skill_dir / "SKILL.md";
+  write_bytes(p, mnemon::embedded::codex_SKILL_md(), 0644);
+  return p;
+}
+
+static fs::path codex_write_hook(const std::string& config_dir, const std::string& filename, std::string_view content) {
+  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
+  write_bytes(hook_path, content, 0755);
+  return hook_path;
+}
+
+static fs::path codex_register_hooks(const std::string& config_dir) {
+  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
+  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
+  nlohmann::json data = read_json_file(hooks_path);
+  add_codex_hooks(data, abs_hooks_dir.string());
+  write_json_file(hooks_path, data);
+  return hooks_path;
+}
+
+static int codex_eject(const std::string& config_dir) {
+  int errs = 0;
+  std::cout << "\nRemoving Codex integration (" << config_dir << ")...\n";
+
+  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  std::error_code ec;
+  fs::remove_all(hooks_dir, ec);
+  if (ec) {
+    status_error("Hooks", ec.message());
+    ++errs;
+  } else {
+    status_ok("Hooks", hooks_dir.string() + " removed");
+  }
+  remove_if_empty_dir(fs::path(config_dir) / "hooks");
+
+  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
+  try {
+    nlohmann::json data = read_json_file(hooks_path);
+    remove_codex_hooks(data);
+    write_or_remove_json_file(hooks_path, data);
+    status_ok("Hooks config", hooks_path.string() + " cleaned");
+  } catch (const std::exception& e) {
+    status_error("Hooks config", e.what());
+    ++errs;
+  }
+
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  ec.clear();
+  fs::remove_all(skill_dir, ec);
+  if (ec) {
+    status_error("Skill", ec.message());
+    ++errs;
+  } else {
+    status_ok("Skill", skill_dir.string() + " removed");
+  }
+  remove_if_empty_dir(fs::path(config_dir) / "skills");
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
+static bool install_codex(Environment env, bool global, bool setup_yes) {
+  std::string config_dir = env.config_dir;
+  if (!global && !setup_yes && is_tty_in()) {
+    std::string local_dir = ".codex";
+    std::string global_dir = (fs::path(home_dir()) / ".codex").string();
+    size_t idx = select_one("Install scope", {
+        "Local — this project only (" + local_dir + "/)",
+        "Global — all projects (" + global_dir + "/)",
+    }, 0);
+    config_dir = (idx == 1) ? global_dir : local_dir;
+  }
+
+  std::cout << "\nSetting up Codex (" << config_dir << ")...\n";
+
+  std::cout << "\n[1/4] Skill\n";
+  try {
+    fs::path p = codex_write_skill(config_dir);
+    status_ok("Skill", p.string());
+  } catch (const std::exception& e) {
+    status_error("Skill", e.what());
+    return false;
+  }
+
+  std::cout << "\n[2/4] Prompts\n";
+  try {
+    fs::path p = write_prompt_files();
+    status_ok("Prompts", p.string());
+  } catch (const std::exception& e) {
+    status_error("Prompts", e.what());
+    return false;
+  }
+
+  std::cout << "\n[3/4] Hooks\n";
+  try {
+    fs::path p = codex_write_hook(config_dir, "prime.sh", mnemon::embedded::codex_prime_sh());
+    status_ok("Hook: prime", p.string());
+  } catch (const std::exception& e) {
+    status_error("Hook: prime", e.what());
+    return false;
+  }
+  try {
+    fs::path p = codex_write_hook(config_dir, "user_prompt.sh", mnemon::embedded::codex_user_prompt_sh());
+    status_ok("Hook: remind", p.string());
+  } catch (const std::exception& e) {
+    status_error("Hook: remind", e.what());
+    return false;
+  }
+  try {
+    fs::path p = codex_write_hook(config_dir, "stop.sh", mnemon::embedded::codex_stop_sh());
+    status_ok("Hook: stop", p.string());
+  } catch (const std::exception& e) {
+    status_error("Hook: stop", e.what());
+    return false;
+  }
+
+  std::cout << "\n[4/4] Config\n";
+  try {
+    fs::path p = codex_register_hooks(config_dir);
+    status_updated("Hooks config", p.string());
+  } catch (const std::exception& e) {
+    status_error("Hooks config", e.what());
+    return false;
+  }
+
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Hooks   " << config_dir << "/hooks.json (SessionStart, UserPromptSubmit, Stop)\n";
+  std::cout << "  Prompts ~/.mnemon/prompt/ (guide.md, skill.md)\n\n";
+  std::cout << "Start a new Codex session to activate.\n";
+  std::cout << "Run 'mnemon setup --eject --target codex' to remove.\n";
+  return true;
 }
 
 // --- install flows ---
@@ -959,8 +1343,14 @@ static bool install_env(Environment* env, bool global, bool setup_yes, const Run
   if (env->name == "claude-code") {
     return install_claude_code(*env, global, setup_yes, opt);
   }
+  if (env->name == "codex") {
+    return install_codex(*env, global, setup_yes);
+  }
   if (env->name == "openclaw") {
     return install_openclaw(*env, global, setup_yes, opt);
+  }
+  if (env->name == "nanobot") {
+    return install_nanobot(*env, global, setup_yes);
   }
   return false;
 }
@@ -969,8 +1359,16 @@ static int eject_env(Environment* env, bool yes) {
   if (env->name == "claude-code") {
     return claude_eject(env->config_dir, yes);
   }
+  if (env->name == "codex") {
+    int errs = codex_eject(env->config_dir);
+    eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
+    return errs;
+  }
   if (env->name == "openclaw") {
     return openclaw_eject(env->config_dir, yes);
+  }
+  if (env->name == "nanobot") {
+    return nanobot_eject(env->config_dir);
   }
   return 0;
 }
@@ -999,7 +1397,7 @@ static void run_install_flow(const RunOptions& opt) {
   }
   if (detected.empty()) {
     std::cout << "\nNo supported LLM CLI environments detected.\n";
-    std::cout << "Install Claude Code or OpenClaw, then run 'mnemon setup' again.\n";
+    std::cout << "Install Claude Code, Codex, OpenClaw, or Nanobot, then run 'mnemon setup' again.\n";
     return;
   }
 
@@ -1058,6 +1456,7 @@ static void run_eject_flow(const RunOptions& opt) {
   }
   if (installed.empty()) {
     std::cout << "\nNo environments detected.\n";
+    eject_local_markdown(opt.yes);
     return;
   }
 
@@ -1095,8 +1494,8 @@ static void run_eject_flow(const RunOptions& opt) {
 } // namespace
 
 void run(const RunOptions& opt) {
-  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "openclaw") {
-    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code or openclaw)");
+  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "openclaw" && opt.target != "nanobot") {
+    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, openclaw, or nanobot)");
   }
   if (opt.eject) {
     run_eject_flow(opt);

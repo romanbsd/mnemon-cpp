@@ -22,6 +22,7 @@
 
 #include <CLI/CLI.hpp>
 
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -35,13 +36,67 @@ namespace fs = std::filesystem;
 static std::string g_data_dir;
 static std::string g_store_flag;
 static bool g_readonly = false;
+static std::string g_embed_model;
 
 #ifndef MNEMON_VERSION_STR
 #define MNEMON_VERSION_STR "dev"
 #endif
 static const char* kVersion = MNEMON_VERSION_STR;
 
+static std::string resolve_embed_model() { return g_embed_model; }
+
 static void print_json(const nlohmann::json& j) { std::cout << j.dump(2) << '\n'; }
+
+// SHA-256 implementation (RFC 6234) — used by the receipt command for privacy-safe hashing.
+static std::string sha256_hex(const std::string& input) {
+  static const uint32_t K[64] = {
+      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+      0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+      0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+      0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  };
+  uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                   0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+  auto rotr = [](uint32_t x, int n) { return (x >> n) | (x << (32 - n)); };
+  std::vector<uint8_t> msg(input.begin(), input.end());
+  uint64_t bitlen = static_cast<uint64_t>(msg.size()) * 8;
+  msg.push_back(0x80);
+  while (msg.size() % 64 != 56) msg.push_back(0);
+  for (int i = 7; i >= 0; --i) msg.push_back(static_cast<uint8_t>((bitlen >> (i * 8)) & 0xff));
+  for (size_t chunk = 0; chunk < msg.size(); chunk += 64) {
+    uint32_t w[64];
+    for (int i = 0; i < 16; ++i) {
+      w[i] = (static_cast<uint32_t>(msg[chunk + i * 4]) << 24) |
+              (static_cast<uint32_t>(msg[chunk + i * 4 + 1]) << 16) |
+              (static_cast<uint32_t>(msg[chunk + i * 4 + 2]) << 8) |
+              static_cast<uint32_t>(msg[chunk + i * 4 + 3]);
+    }
+    for (int i = 16; i < 64; ++i) {
+      uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+      uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+      w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+    for (int i = 0; i < 64; ++i) {
+      uint32_t S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      uint32_t ch = (e & f) ^ (~e & g);
+      uint32_t temp1 = hh + S1 + ch + K[i] + w[i];
+      uint32_t S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+      uint32_t temp2 = S0 + maj;
+      hh = g; g = f; f = e; e = d + temp1; d = c; c = b; b = a; a = temp1 + temp2;
+    }
+    h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+  }
+  std::ostringstream oss;
+  for (int i = 0; i < 8; ++i)
+    oss << std::hex << std::setfill('0') << std::setw(8) << h[i];
+  return oss.str();
+}
 
 static std::string resolve_store() {
   if (!g_store_flag.empty()) {
@@ -55,6 +110,9 @@ static std::string resolve_store() {
 
 static std::unique_ptr<mnemon::Database> open_db() {
   std::string name = resolve_store();
+  if (!mnemon::paths::valid_store_name(name)) {
+    throw std::runtime_error("invalid store name \"" + name + "\"");
+  }
   std::string dir = mnemon::paths::store_dir(g_data_dir, name);
   if (g_readonly) {
     return mnemon::Database::open_readonly(dir);
@@ -63,6 +121,20 @@ static std::unique_ptr<mnemon::Database> open_db() {
     throw std::runtime_error("migrate failed");
   }
   return mnemon::Database::open_readwrite(dir);
+}
+
+static void require_positive_limit(const char* flag, int value) {
+  if (value < 1) {
+    throw std::runtime_error(std::string(flag) + " must be at least 1, got " + std::to_string(value));
+  }
+}
+
+static void require_non_negative_float(const char* flag, double value) {
+  if (value < 0.0) {
+    std::ostringstream oss;
+    oss << flag << " must be non-negative, got " << value;
+    throw std::runtime_error(oss.str());
+  }
 }
 
 static bool valid_category(const std::string& c) {
@@ -133,6 +205,7 @@ int run_mnemon(int argc, char** argv) {
   app.add_option("--data-dir", g_data_dir, "base data directory (env: MNEMON_DATA_DIR)");
   app.add_option("--store", g_store_flag, "named memory store (overrides MNEMON_STORE and active file)");
   app.add_flag("--readonly", g_readonly, "open database in read-only mode");
+  app.add_option("--embed-model", g_embed_model, "Ollama embedding model (env: MNEMON_EMBED_MODEL; default: nomic-embed-text)");
 
   auto trunc8 = [](const std::string& id) { return id.size() > 8 ? id.substr(0, 8) : id; };
 
@@ -144,6 +217,7 @@ int run_mnemon(int argc, char** argv) {
   std::string rem_tags;
   std::string rem_source = "user";
   std::string rem_entities;
+  std::string rem_entity_mode = "merge";
   bool rem_no_diff = false;
   remember->add_option("content", rem_parts, "insight text")->required()->expected(-1);
   remember->add_option("--cat", rem_cat, "category");
@@ -151,6 +225,7 @@ int run_mnemon(int argc, char** argv) {
   remember->add_option("--tags", rem_tags, "comma-separated tags");
   remember->add_option("--source", rem_source, "source");
   remember->add_option("--entities", rem_entities, "comma-separated entities");
+  remember->add_option("--entity-mode", rem_entity_mode, "entity extraction mode: merge, provided, auto");
   remember->add_flag("--no-diff", rem_no_diff);
   remember->callback([&] {
     std::string rem_content;
@@ -190,9 +265,12 @@ int run_mnemon(int argc, char** argv) {
         throw CLI::ValidationError("entity too long (" + std::to_string(e.size()) + " chars, max 200): " + e.substr(0, 50));
       }
     }
+    if (!mnemon::graph_eng::valid_entity_mode(rem_entity_mode)) {
+      throw std::runtime_error("invalid entity mode \"" + rem_entity_mode + "\"; valid: merge, provided, auto");
+    }
 
     auto db = open_db();
-    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env();
+    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
     std::vector<double> embed_vec;
     std::vector<uint8_t> embed_blob;
     if (oc.available()) {
@@ -289,7 +367,7 @@ int run_mnemon(int argc, char** argv) {
           embedded = true;
           embed_cache[insight.id] = embed_vec;
         }
-        estats = mnemon::graph_eng::on_insight_created(*db, insight, ec_ptr);
+        estats = mnemon::graph_eng::on_insight_created(*db, insight, ec_ptr, rem_entity_mode);
         if (!insight.entities.empty()) {
           db->update_entities(insight.id, insight.entities);
         }
@@ -364,6 +442,7 @@ int run_mnemon(int argc, char** argv) {
   recall->add_flag("--smart", rec_smart)->group("");
   recall->add_option("--intent", rec_intent);
   recall->callback([&] {
+    require_positive_limit("--limit", rec_limit);
     std::string rec_query;
     for (size_t i = 0; i < rec_parts.size(); ++i) {
       if (i) {
@@ -399,7 +478,7 @@ int run_mnemon(int argc, char** argv) {
       ov = *p;
     }
     std::vector<double> qvec;
-    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env();
+    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
     if (oc.available()) {
       try {
         qvec = oc.embed(rec_query);
@@ -439,6 +518,7 @@ int run_mnemon(int argc, char** argv) {
   search->add_option("query", sea_parts)->required()->expected(-1);
   search->add_option("--limit", sea_limit);
   search->callback([&] {
+    require_positive_limit("--limit", sea_limit);
     std::string sea_q;
     for (size_t i = 0; i < sea_parts.size(); ++i) {
       if (i) {
@@ -585,6 +665,8 @@ int run_mnemon(int argc, char** argv) {
   gc->add_option("--limit", gc_lim);
   gc->add_option("--keep", gc_keep);
   gc->callback([&] {
+    require_positive_limit("--limit", gc_lim);
+    require_non_negative_float("--threshold", gc_thr);
     auto db = open_db();
     if (!gc_keep.empty()) {
       auto ins = db->get_insight_by_id(gc_keep);
@@ -635,7 +717,7 @@ int run_mnemon(int argc, char** argv) {
   embed->add_flag("--status", emb_status);
   embed->callback([&] {
     auto db = open_db();
-    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env();
+    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
     if (emb_status) {
       auto [tot, emb] = db->embedding_stats();
       int pct = tot > 0 ? static_cast<int>(std::lround(100.0 * static_cast<double>(emb) / static_cast<double>(tot))) : 0;
@@ -717,6 +799,7 @@ int run_mnemon(int argc, char** argv) {
   int log_limit = 20;
   logc->add_option("--limit", log_limit);
   logc->callback([&] {
+    require_positive_limit("--limit", log_limit);
     auto db = open_db();
     auto entries = db->get_oplog(log_limit);
     if (entries.empty()) {
@@ -737,6 +820,49 @@ int run_mnemon(int argc, char** argv) {
       std::cout << e.created_at << "  " << std::left << std::setw(8) << e.operation << "  " << std::setw(8) << ins
                 << "  " << det << "\n";
     }
+  });
+
+  // --- receipt ---
+  auto* receipt = app.add_subcommand("receipt", "Export a privacy-safe memory operation receipt");
+  int receipt_limit = 20;
+  receipt->add_option("--limit", receipt_limit);
+  receipt->callback([&] {
+    require_positive_limit("--limit", receipt_limit);
+    auto db = open_db();
+    auto entries = db->get_oplog(receipt_limit);
+
+    auto hash_if_present = [](const std::string& v) -> std::string {
+      if (v.empty()) return "";
+      return sha256_hex(v);
+    };
+
+    nlohmann::json events = nlohmann::json::array();
+    for (const auto& e : entries) {
+      nlohmann::json ev;
+      ev["event_name"] = "mnemon.memory.operation.observed";
+      ev["operation"] = e.operation;
+      ev["created_at"] = e.created_at;
+      std::string id_hash = hash_if_present(e.insight_id);
+      if (!id_hash.empty()) ev["insight_id_hash"] = id_hash;
+      std::string detail_hash = hash_if_present(e.detail);
+      if (!detail_hash.empty()) ev["detail_hash"] = detail_hash;
+      ev["detail_present"] = !e.detail.empty();
+      events.push_back(ev);
+    }
+
+    nlohmann::json doc;
+    doc["schema"] = "mnemon.memory.receipt.v1";
+    doc["generated_at"] = mnemon::time_util::rfc3339_utc(mnemon::time_util::now_utc());
+    doc["store"] = resolve_store();
+    doc["limit"] = receipt_limit;
+    doc["count"] = static_cast<int>(events.size());
+    doc["privacy"] = {
+        {"raw_detail_included", false},
+        {"hash_algorithm", "sha256"},
+        {"note", "Raw memory contents, recall queries, paths, and operation details are omitted; only hashes and operation metadata are emitted."},
+    };
+    doc["events"] = events;
+    print_json(doc);
   });
 
   // --- store ---
@@ -773,6 +899,9 @@ int run_mnemon(int argc, char** argv) {
   std::string st_setname;
   st_set->add_option("name", st_setname)->required();
   st_set->callback([&] {
+    if (!mnemon::paths::valid_store_name(st_setname)) {
+      throw CLI::ValidationError("invalid store name \"" + st_setname + "\": must match [a-zA-Z0-9][a-zA-Z0-9_-]*");
+    }
     if (!mnemon::paths::store_exists(g_data_dir, st_setname)) {
       throw std::runtime_error("store \"" + st_setname + "\" does not exist (use 'mnemon store create " + st_setname +
                               "' first)");
@@ -786,6 +915,9 @@ int run_mnemon(int argc, char** argv) {
   std::string st_remname;
   st_rem->add_option("name", st_remname)->required();
   st_rem->callback([&] {
+    if (!mnemon::paths::valid_store_name(st_remname)) {
+      throw CLI::ValidationError("invalid store name \"" + st_remname + "\": must match [a-zA-Z0-9][a-zA-Z0-9_-]*");
+    }
     if (!mnemon::paths::store_exists(g_data_dir, st_remname)) {
       throw std::runtime_error("store \"" + st_remname + "\" does not exist");
     }
@@ -803,7 +935,7 @@ int run_mnemon(int argc, char** argv) {
   bool setup_eject = false;
   bool setup_yes = false;
   bool setup_global = false;
-  setup->add_option("--target", setup_target)->description("claude-code | openclaw");
+  setup->add_option("--target", setup_target)->description("claude-code | codex | openclaw | nanobot");
   setup->add_flag("--eject", setup_eject);
   setup->add_flag("--yes", setup_yes);
   setup->add_flag("--global", setup_global);

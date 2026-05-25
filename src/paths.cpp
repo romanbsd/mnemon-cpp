@@ -56,10 +56,16 @@ std::string read_active(const std::string& base) {
   if (line.empty()) {
     return kDefaultStore;
   }
+  if (!valid_store_name(line)) {
+    return kDefaultStore;
+  }
   return line;
 }
 
 bool write_active(const std::string& base, const std::string& name) {
+  if (!valid_store_name(name)) {
+    return false;
+  }
   std::error_code ec;
   fs::create_directories(base, ec);
   if (ec) {
@@ -81,7 +87,7 @@ std::vector<std::string> list_stores(const std::string& base) {
     return names;
   }
   for (const auto& e : fs::directory_iterator(data_dir, ec)) {
-    if (e.is_directory()) {
+    if (e.is_directory() && valid_store_name(e.path().filename().string())) {
       names.push_back(e.path().filename().string());
     }
   }
@@ -90,8 +96,20 @@ std::vector<std::string> list_stores(const std::string& base) {
 }
 
 bool store_exists(const std::string& base, const std::string& name) {
+  if (!valid_store_name(name)) {
+    return false;
+  }
   std::error_code ec;
   return fs::is_directory(store_dir(base, name), ec);
+}
+
+static bool rename_if_exists(const fs::path& old_path, const fs::path& new_path) {
+  std::error_code ec;
+  if (!fs::exists(old_path, ec)) {
+    return !ec;
+  }
+  fs::rename(old_path, new_path, ec);
+  return !ec;
 }
 
 // Legacy layout: single ~/.mnemon/mnemon.db → ~/.mnemon/data/default/mnemon.db (+ WAL sidecars).
@@ -120,11 +138,11 @@ bool migrate_if_needed(const std::string& base, bool readonly_mode) {
   }
   fs::path old_wal = fs::path(base) / "mnemon.db-wal";
   fs::path old_shm = fs::path(base) / "mnemon.db-shm";
-  if (fs::exists(old_wal, ec)) {
-    fs::rename(old_wal, fs::path(new_db.string() + "-wal"), ec);
+  if (!rename_if_exists(old_wal, fs::path(new_db.string() + "-wal"))) {
+    return false;
   }
-  if (fs::exists(old_shm, ec)) {
-    fs::rename(old_shm, fs::path(new_db.string() + "-shm"), ec);
+  if (!rename_if_exists(old_shm, fs::path(new_db.string() + "-shm"))) {
+    return false;
   }
   std::cerr << "mnemon: migrated database to " << new_db.string() << "\n";
   return true;

@@ -11,28 +11,38 @@
 
 namespace mnemon::search_engine {
 
-// Phrases that flip “similar text” into a semantic conflict (English + Chinese), aligned with Go diff heuristics.
-static const char* kNeg[] = {"not",           "no longer",     "don't",     "doesn't",    "never",
-                             "switched from", "instead of",    "rather than", "replaced", "deprecated",
-                             "不",            "没有",          "不再",      "放弃",       "替换",
-                             "取消"};
+// Clear state-change signals. Single common words like "not" are excluded —
+// they appear constantly in scientific/research text and cause false CONFLICT.
+static const char* kNeg[] = {
+    "no longer", "don't", "doesn't", "never", "switched from",
+    "instead of", "rather than", "replaced", "deprecated",
+    "\xe4\xb8\x8d\xe5\x86\x8d",  // 不再
+    "\xe6\x94\xbe\xe5\xbc\x83",  // 放弃
+    "\xe6\x9b\xbf\xe6\x8d\xa2",  // 替换
+    "\xe5\x8f\x96\xe6\xb6\x88",  // 取消
+};
 
 // Thresholds: low sim → ADD; negation → CONFLICT; very high → DUPLICATE; else UPDATE.
 static DiffSuggestion classify_suggestion(double similarity, std::string_view new_text, std::string_view old_text) {
   if (similarity < 0.5) {
     return DiffSuggestion::Add;
   }
-  std::string nl(new_text);
-  std::string ol(old_text);
-  for (auto& c : nl) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  for (auto& c : ol) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  for (const char* neg : kNeg) {
-    if (nl.find(neg) != std::string::npos || ol.find(neg) != std::string::npos) {
-      return DiffSuggestion::Conflict;
+  // Only check conflict signals when texts are substantially similar.
+  // At borderline similarity (0.5–0.7) texts may share domain vocabulary
+  // without being about the same subject.
+  if (similarity >= 0.7) {
+    std::string nl(new_text);
+    std::string ol(old_text);
+    for (auto& c : nl) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    for (auto& c : ol) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    for (const char* neg : kNeg) {
+      if (nl.find(neg) != std::string::npos || ol.find(neg) != std::string::npos) {
+        return DiffSuggestion::Conflict;
+      }
     }
   }
   if (similarity > 0.9) {
@@ -82,14 +92,15 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
   }
   for (size_t idx = 0; idx < candidates.size(); ++idx) {
     const auto& c = candidates[idx];
-    double token_sim = content_similarity(new_content, c.insight.content);
+    double token_sim = jaccard_similarity(new_content, c.insight.content);
     double cosine_sim = 0;
     if (!cand_cos.empty()) {
       cosine_sim = cand_cos[idx];
     }
     double similarity = token_sim;
-    // Strong embedding agreement can override token Jaccard when text wording diverges.
-    if (cosine_sim >= 0.7 && cosine_sim > similarity) {
+    // Combined similarity: cosine only contributes when above 0.85.
+    // Below that, same-domain content clusters around 0.70–0.84 and produces false UPDATE.
+    if (cosine_sim >= 0.85 && cosine_sim > similarity) {
       similarity = cosine_sim;
     }
     auto sug = classify_suggestion(similarity, new_content, c.insight.content);
@@ -120,7 +131,7 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
     auto second_cos = mnemon::cosine_similarity_many(opts.new_embedding, second_vecs);
     for (size_t i = 0; i < second_ids.size(); ++i) {
       double cs = second_cos[i];
-      if (cs >= 0.7) {
+      if (cs >= 0.85) {
         top_cos.push_back({second_ids[i], cs});
       }
     }
@@ -137,9 +148,9 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
       if (it == id_to_ins.end()) {
         continue;
       }
-      double token_sim = content_similarity(new_content, it->second.content);
+      double token_sim = jaccard_similarity(new_content, it->second.content);
       double similarity = token_sim;
-      if (cp.sim >= 0.7 && cp.sim > similarity) {
+      if (cp.sim >= 0.85 && cp.sim > similarity) {
         similarity = cp.sim;
       }
       auto sug = classify_suggestion(similarity, new_content, it->second.content);
@@ -150,7 +161,14 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
     }
   }
 
-  // Overall suggestion: any DUPLICATE among candidates wins (stop remember-as-new).
+  // Sort by similarity descending so matches[0] is always the strongest candidate.
+  // keyword_search orders by token overlap score, which can differ from the final
+  // Jaccard-based similarity — a high-keyword-score ADD would otherwise mask a
+  // lower-keyword-score UPDATE or DUPLICATE from a more similar candidate.
+  std::sort(matches.begin(), matches.end(),
+            [](const DiffMatch& a, const DiffMatch& b) { return a.similarity > b.similarity; });
+
+  // Overall suggestion: take the strongest match; any DUPLICATE wins.
   DiffSuggestion overall = DiffSuggestion::Add;
   if (!matches.empty()) {
     overall = matches[0].suggestion;

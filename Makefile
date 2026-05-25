@@ -1,5 +1,5 @@
 # C++ mnemon — convenience targets (CMake is the source of truth).
-.PHONY: build test unit clean help
+.PHONY: build test unit test-helper clean help
 
 CMAKE_BUILD_TYPE ?= Release
 
@@ -15,6 +15,10 @@ unit: build ## ctest from build/
 
 test: build ## Full E2E harness (requires jq)
 	bash scripts/e2e_test.sh
+
+test-helper: ## Run upstream-sync helper tests (no build, no network)
+	bash tests/upstream_sync_helper_test.sh
+	@if [ -f tests/upstream_release_tags_test.sh ]; then bash tests/upstream_release_tags_test.sh; fi
 
 clean: ## Remove build tree and local E2E data
 	rm -rf build .testdata
