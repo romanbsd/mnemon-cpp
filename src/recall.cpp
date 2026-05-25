@@ -401,7 +401,7 @@ RecallResponse intent_aware_recall(Database& db, std::string_view query, const s
         content_tokens = insight_tokens(c.ins);
       }
       int inter = 0;
-      for (const auto& [t, _] : query_tokens) {
+      for (const auto& t : query_tokens) {
         if (content_tokens.count(t)) {
           inter++;
         }

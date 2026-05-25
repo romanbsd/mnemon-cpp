@@ -128,6 +128,15 @@ TEST_CASE("diff: sort by similarity — UPDATE not masked by lower-Jaccard ADD c
   REQUIRE(res.suggestion == DiffSuggestion::Update);
 }
 
+TEST_CASE("tokenize preserves non-BMP UTF-8 tokens") {
+  // Regression: 4-byte code points decoded successfully, but the word builder
+  // only re-encoded up to 3-byte UTF-8 sequences.
+  const auto tokens = tokenize("script \xF0\x90\x90\xB7 marker");
+  REQUIRE(tokens.count("\xF0\x90\x90\xB7") == 1);
+  REQUIRE(tokens.count("script") == 1);
+  REQUIRE(tokens.count("marker") == 1);
+}
+
 // placeholder to keep the binary alive before any other tests are added
 TEST_CASE("placeholder") { REQUIRE(true); }
 

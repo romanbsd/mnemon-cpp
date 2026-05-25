@@ -2,12 +2,11 @@
 
 #include <cstdint>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
 
 namespace mnemon::search_engine {
 
-using TokenSet = std::unordered_map<std::string, bool>;
+using TokenSet = std::unordered_set<std::string>;
 
 const std::unordered_set<std::string>& stopwords();
 

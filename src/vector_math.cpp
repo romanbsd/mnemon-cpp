@@ -50,37 +50,19 @@ std::vector<double> cosine_similarity_many(const std::vector<double>& query,
   }
   const double query_norm = std::sqrt(query_sq);
 
-  std::vector<size_t> valid_idx;
-  std::vector<double> matrix;
-  valid_idx.reserve(vectors.size());
-  matrix.reserve(vectors.size() * query.size());
-
   for (size_t i = 0; i < vectors.size(); ++i) {
     const auto* v = vectors[i];
     if (!v || v->size() != query.size()) {
       continue;
     }
-    valid_idx.push_back(i);
-    matrix.insert(matrix.end(), v->begin(), v->end());
-  }
-
-  if (valid_idx.empty()) {
-    return out;
-  }
-
-  const int rows = static_cast<int>(valid_idx.size());
-  const int cols = static_cast<int>(query.size());
-  std::vector<double> dots(valid_idx.size(), 0.0);
-  cblas_dgemv(CblasRowMajor, CblasNoTrans, rows, cols, 1.0, matrix.data(), cols, query.data(), 1, 0.0, dots.data(), 1);
-
-  for (size_t r = 0; r < valid_idx.size(); ++r) {
-    const double* row = matrix.data() + r * query.size();
+    double dot = 0;
     double row_sq = 0;
-    vDSP_dotprD(row, 1, row, 1, &row_sq, n);
+    vDSP_dotprD(query.data(), 1, v->data(), 1, &dot, n);
+    vDSP_dotprD(v->data(), 1, v->data(), 1, &row_sq, n);
     if (row_sq == 0) {
       continue;
     }
-    out[valid_idx[r]] = dots[r] / (query_norm * std::sqrt(row_sq));
+    out[i] = dot / (query_norm * std::sqrt(row_sq));
   }
   return out;
 #else

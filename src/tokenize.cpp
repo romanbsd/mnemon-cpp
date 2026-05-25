@@ -8,7 +8,7 @@
 namespace mnemon::search_engine {
 
 // Manual UTF-8 decode: advances i and sets cp; invalid sequences consume one byte (lossy but safe).
-static bool utf8_next(const std::string& s, size_t& i, uint32_t& cp) {
+static bool utf8_next(std::string_view s, size_t& i, uint32_t& cp) {
   if (i >= s.size()) {
     return false;
   }
@@ -69,7 +69,7 @@ static void flush_cjk(std::u32string& buf, TokenSet& tokens) {
     if (buf.size() == 1) {
       std::string u8;
       append_rune_utf8(u8, buf[0]);
-      tokens[std::move(u8)] = true;
+      tokens.insert(std::move(u8));
     }
     buf.clear();
     return;
@@ -78,7 +78,7 @@ static void flush_cjk(std::u32string& buf, TokenSet& tokens) {
     std::string pair;
     append_rune_utf8(pair, buf[j]);
     append_rune_utf8(pair, buf[j + 1]);
-    tokens[std::move(pair)] = true;
+    tokens.insert(std::move(pair));
   }
   buf.clear();
 }
@@ -97,25 +97,22 @@ const std::unordered_set<std::string>& stopwords() {
 
 // Lowercase ASCII, split alnum/Latin words (minus stopwords), and bigram Han sequences.
 TokenSet tokenize(std::string_view text_sv) {
-  std::string text(text_sv);
-  for (auto& c : text) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
   TokenSet tokens;
   std::string word;
   std::u32string cjk_buf;
   size_t i = 0;
-  while (i < text.size()) {
+  while (i < text_sv.size()) {
     uint32_t cp = 0;
-    size_t j = i;
-    if (!utf8_next(text, i, cp)) {
+    if (!utf8_next(text_sv, i, cp)) {
       break;
     }
-    (void)j;
+    if (cp < 128) {
+      cp = static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(cp)));
+    }
     if (is_han(cp)) {
       if (!word.empty()) {
         if (!stopwords().count(word)) {
-          tokens[word] = true;
+          tokens.insert(word);
         }
         word.clear();
       }
@@ -124,24 +121,12 @@ TokenSet tokenize(std::string_view text_sv) {
       if (!cjk_buf.empty()) {
         flush_cjk(cjk_buf, tokens);
       }
-      if (std::isalnum(static_cast<unsigned char>(cp)) || cp > 127) {
-        // append UTF-8 for this codepoint to word (text already lowercased ASCII)
-        if (cp < 128) {
-          word.push_back(static_cast<char>(cp));
-        } else {
-          if (cp < 0x800) {
-            word.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-            word.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-          } else if (cp < 0x10000) {
-            word.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-            word.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            word.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-          }
-        }
+      if (cp > 127 || std::isalnum(static_cast<unsigned char>(cp))) {
+        append_rune_utf8(word, cp);
       } else {
         if (!word.empty()) {
           if (!stopwords().count(word)) {
-            tokens[word] = true;
+            tokens.insert(word);
           }
           word.clear();
         }
@@ -150,7 +135,7 @@ TokenSet tokenize(std::string_view text_sv) {
   }
   if (!word.empty()) {
     if (!stopwords().count(word)) {
-      tokens[word] = true;
+      tokens.insert(word);
     }
   }
   if (!cjk_buf.empty()) {
@@ -167,7 +152,7 @@ double content_similarity(std::string_view a, std::string_view b) {
     return 0;
   }
   int inter = 0;
-  for (const auto& [k, _] : ta) {
+  for (const auto& k : ta) {
     if (tb.count(k)) {
       inter++;
     }
@@ -184,7 +169,7 @@ double jaccard_similarity(std::string_view a, std::string_view b) {
     return 0;
   }
   int inter = 0;
-  for (const auto& [k, _] : ta) {
+  for (const auto& k : ta) {
     if (tb.count(k)) {
       inter++;
     }
