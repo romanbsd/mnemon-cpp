@@ -820,6 +820,59 @@ step "smart recall — invalid intent rejected"
 OUT=$($M --data-dir "$TESTDIR3" recall "test" --smart --intent INVALID 2>&1 || true)
 assert_contains "rejects invalid intent" "$OUT" "unknown intent"
 
+# ══════════════════════════════════════════════════════════════════════
+banner "Setup eject: markdown cleanup"
+# ══════════════════════════════════════════════════════════════════════
+
+EJECT_DIR="$TESTDATA/eject_test"
+mkdir -p "$EJECT_DIR/.claude"
+
+step "eject — removes mnemon block even when stale end-marker precedes start-marker"
+# This tests the fix for: end_idx was searched from pos 0, so a <!-- mnemon:end -->
+# fragment appearing BEFORE <!-- mnemon:start --> caused the wrong range to be found
+# and the block was left intact.
+cat > "$EJECT_DIR/CLAUDE.md" << 'MDEOF'
+# My Project
+
+Some text <!-- mnemon:end --> in passing.
+
+<!-- mnemon:start -->
+## Mnemon Memory Guidance
+Instructions for agent.
+<!-- mnemon:end -->
+
+## Development Notes
+
+Keep going.
+MDEOF
+
+(cd "$EJECT_DIR" && $M setup --eject --yes 2>&1 || true)
+EJECT_MD=$(cat "$EJECT_DIR/CLAUDE.md" 2>/dev/null || echo "FILE_DELETED")
+assert_not_contains "removed start marker" "$EJECT_MD" "mnemon:start"
+assert_contains "preserved pre-block content" "$EJECT_MD" "My Project"
+assert_contains "preserved post-block content" "$EJECT_MD" "Development Notes"
+
+step "eject — no triple newlines after removing sandwiched block"
+cat > "$EJECT_DIR/CLAUDE.md" << 'MDEOF'
+# Header
+
+Content before.
+
+<!-- mnemon:start -->
+Guidance.
+<!-- mnemon:end -->
+
+Content after.
+MDEOF
+
+(cd "$EJECT_DIR" && $M setup --eject --yes 2>&1 || true)
+EJECT_MD2=$(cat "$EJECT_DIR/CLAUDE.md" 2>/dev/null || echo "FILE_DELETED")
+# $(printf '\n\n\n') is stripped by command substitution; detect via awk instead
+CONSEC_BLANKS=$(awk '/^$/{c++; if(c>=2){found=1;exit}} !/^$/{c=0} END{print found+0}' "$EJECT_DIR/CLAUDE.md" 2>/dev/null || echo "0")
+if [ "$CONSEC_BLANKS" = "0" ]; then pass "no triple newlines" "(absent: consecutive blank lines)"; else fail "no triple newlines" "(should NOT contain: consecutive blank lines)"; fi
+assert_contains "preserved header" "$EJECT_MD2" "Header"
+assert_contains "preserved content" "$EJECT_MD2" "Content after"
+
 # ── Report ────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
