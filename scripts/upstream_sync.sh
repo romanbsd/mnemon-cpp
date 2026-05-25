@@ -207,9 +207,9 @@ classify_paths() {
   elif [[ $has_doc_meta -eq 1 ]]; then
     echo "doc-meta-only"
   else
-    # Empty diff (merge commit without -m, or empty commit).
-    # Force the skill to examine and decide rather than silently skipping.
-    echo "relevant"
+    # Empty diff: merge commit whose content is fully expressed by its parents.
+    # All such commits observed in practice are no-ops for the C++ port.
+    echo "doc-meta-only"
   fi
 }
 
