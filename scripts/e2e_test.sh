@@ -900,6 +900,14 @@ assert_contains "bogus target rejected" "$OUT" "invalid target"
 step "setup --target bogus error mentions nanobot"
 assert_contains "error mentions nanobot" "$OUT" "nanobot"
 
+step "setup --target codex --yes — accepted (installs skill)"
+OUT=$($M --data-dir "$SETUPDIR" setup --target codex --yes 2>&1 || true)
+assert_contains "codex target accepted" "$OUT" "Skill"
+
+step "setup --target bogus error mentions codex"
+OUT=$($M --data-dir "$SETUPDIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions codex" "$OUT" "codex"
+
 # ══════════════════════════════════════════════════════════════════════
 banner "Setup eject: markdown cleanup"
 # ══════════════════════════════════════════════════════════════════════
