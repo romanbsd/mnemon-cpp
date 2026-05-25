@@ -185,6 +185,23 @@ step "store set — reject nonexistent"
 OUT=$($M --data-dir "$STORE_DIR" store set nonexistent 2>&1 || true)
 assert_contains "rejects missing" "$OUT" "does not exist"
 
+step "store set — reject invalid name"
+OUT=$($M --data-dir "$STORE_DIR" store set "../outside" 2>&1 || true)
+assert_contains "store set rejects invalid" "$OUT" "invalid store name"
+
+step "store remove — reject invalid name"
+OUT=$($M --data-dir "$STORE_DIR" store remove "../outside" 2>&1 || true)
+assert_contains "store remove rejects invalid" "$OUT" "invalid store name"
+
+step "MNEMON_STORE invalid — openDB rejects"
+OUT=$(MNEMON_STORE="../outside" $M --data-dir "$STORE_DIR" status 2>&1 || true)
+assert_contains "env invalid store rejected" "$OUT" "invalid store name"
+
+step "store list — filters invalid directory names"
+mkdir -p "$STORE_DIR/data/.hidden"
+OUT=$($M --data-dir "$STORE_DIR" store list)
+assert_not_contains "list filters .hidden" "$OUT" ".hidden"
+
 step "store remove — cannot remove active store"
 OUT=$($M --data-dir "$STORE_DIR" store remove work 2>&1 || true)
 assert_contains "rejects active removal" "$OUT" "cannot remove the active store"
