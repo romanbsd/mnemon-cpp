@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=882d425ee2cd19c90315a361946355597898c57a
-last_sha_subject=Merge pull request #27 from mnemon-dev/codex-integration
-last_sha_date=2026-05-18T15:43:28+08:00
+last_sha=cd943852142015d713db1afd86f0459b4cee6425
+last_sha_subject=feat: add privacy-safe memory receipts
+last_sha_date=2026-05-24T01:15:20+08:00

@@ -961,6 +961,28 @@ if [ "$CONSEC_BLANKS" = "0" ]; then pass "no triple newlines" "(absent: consecut
 assert_contains "preserved header" "$EJECT_MD2" "Header"
 assert_contains "preserved content" "$EJECT_MD2" "Content after"
 
+banner "Milestone 12: Privacy-Safe Memory Receipts"
+RECEIPT_DIR="$TESTDATA/receipt"
+mkdir -p "$RECEIPT_DIR"
+
+step "receipt — empty oplog returns valid JSON receipt"
+OUT=$($M --data-dir "$RECEIPT_DIR" receipt 2>&1)
+assert_jq "receipt schema" "$OUT" '.schema' 'mnemon.memory.receipt.v1'
+assert_jq "receipt privacy raw_detail_included false" "$OUT" '.privacy.raw_detail_included' 'false'
+assert_jq "receipt count 0" "$OUT" '.count' '0'
+
+step "receipt — after remember, receipt omits raw content"
+$M --data-dir "$RECEIPT_DIR" remember "secret sauce recipe" --cat fact --imp 3 > /dev/null
+OUT=$($M --data-dir "$RECEIPT_DIR" receipt 2>&1)
+assert_jq "receipt count 1" "$OUT" '.count' '1'
+assert_jq "receipt event name" "$OUT" '.events[0].event_name' 'mnemon.memory.operation.observed'
+assert_jq "receipt no raw content" "$OUT" 'any(.events[]; has("content"))' 'false'
+assert_jq "receipt has detail_present" "$OUT" '.events[0].detail_present' 'true'
+
+step "receipt --limit controls max events"
+OUT=$($M --data-dir "$RECEIPT_DIR" receipt --limit 1 2>&1)
+assert_jq "receipt limit respected" "$OUT" '.events | length' '1'
+
 # ── Report ────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
