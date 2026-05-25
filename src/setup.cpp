@@ -624,18 +624,32 @@ static bool eject_memory_block(const fs::path& file_path) {
   if (start_idx == std::string::npos) {
     return false;
   }
-  size_t end_idx = s.find(kEnd);
-  if (end_idx == std::string::npos) {
+  // Search for end marker AFTER the start marker to avoid false matches
+  size_t end_rel = s.find(kEnd, start_idx + kStart.size());
+  if (end_rel == std::string::npos) {
     return false;
   }
-  end_idx += kEnd.size();
+  size_t end_idx = end_rel + kEnd.size();
+
+  bool removed_leading = false;
+  bool removed_trailing = false;
   if (start_idx > 0 && s[start_idx - 1] == '\n') {
     --start_idx;
+    removed_leading = true;
   }
   if (end_idx < s.size() && s[end_idx] == '\n') {
     ++end_idx;
+    removed_trailing = true;
   }
   std::string result = s.substr(0, start_idx) + s.substr(end_idx);
+  if (removed_leading && removed_trailing && start_idx > 0 && end_idx < s.size()) {
+    result = s.substr(0, start_idx) + "\n" + s.substr(end_idx);
+  }
+  // Collapse triple newlines (can appear when block was surrounded by blank lines)
+  while (result.find("\n\n\n") != std::string::npos) {
+    size_t p = result.find("\n\n\n");
+    result.replace(p, 3, "\n\n");
+  }
   // trim space like Go strings.TrimSpace
   size_t a = result.find_first_not_of(" \t\n\r");
   if (a == std::string::npos) {
@@ -645,7 +659,13 @@ static bool eject_memory_block(const fs::path& file_path) {
   size_t b = result.find_last_not_of(" \t\n\r");
   result = result.substr(a, b - a + 1);
   result.push_back('\n');
-  write_bytes(file_path, result, 0644);
+  // Write directly (file already exists; don't attempt to create parent dirs)
+  std::ofstream out(file_path, std::ios::binary | std::ios::trunc);
+  if (!out) {
+    throw std::runtime_error("write " + file_path.string());
+  }
+  out.write(result.data(), static_cast<std::streamsize>(result.size()));
+  chmod_path(file_path, 0644);
   return true;
 }
 
@@ -712,6 +732,74 @@ static int claude_eject(const std::string& config_dir, bool yes) {
   return errs;
 }
 
+// remove_openclaw_plugin_entry removes the "mnemon" entry from openclaw.json's
+// plugins.entries. Deletes the file entirely if it becomes empty. Returns an
+// error string on failure, empty on success (including file-not-found).
+static std::string remove_openclaw_plugin_entry(const fs::path& cfg_path) {
+  std::error_code ec;
+  if (!fs::exists(cfg_path, ec)) {
+    return "";
+  }
+  std::ifstream in(cfg_path);
+  if (!in) {
+    return "open " + cfg_path.string() + ": read error";
+  }
+  std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  nlohmann::json cfg;
+  try {
+    cfg = nlohmann::json::parse(raw);
+  } catch (const std::exception& e) {
+    return "parse openclaw.json: " + std::string(e.what());
+  }
+
+  if (!cfg.contains("plugins") || !cfg["plugins"].is_object()) {
+    return "";
+  }
+  auto& plugins = cfg["plugins"];
+  if (!plugins.contains("entries") || !plugins["entries"].is_object()) {
+    return "";
+  }
+  auto& entries = plugins["entries"];
+  if (!entries.contains("mnemon")) {
+    return "";
+  }
+  entries.erase("mnemon");
+  if (entries.empty()) {
+    plugins.erase("entries");
+  }
+  if (plugins.empty()) {
+    cfg.erase("plugins");
+  }
+
+  if (cfg.empty()) {
+    ec.clear();
+    fs::remove(cfg_path, ec);
+    if (ec) {
+      return "remove " + cfg_path.string() + ": " + ec.message();
+    }
+    return "";
+  }
+
+  std::string out = cfg.dump(2);
+  out.push_back('\n');
+  fs::path tmp = cfg_path;
+  tmp += ".tmp";
+  {
+    std::ofstream o(tmp, std::ios::trunc);
+    if (!o) {
+      return "write " + tmp.string() + ": open error";
+    }
+    o << out;
+  }
+  ec.clear();
+  fs::rename(tmp, cfg_path, ec);
+  if (ec) {
+    return "rename " + tmp.string() + ": " + ec.message();
+  }
+  chmod_path(cfg_path, 0600);
+  return "";
+}
+
 static int openclaw_eject(const std::string& config_dir, bool yes) {
   std::cout << "\nRemoving OpenClaw integration (" << config_dir << ")...\n";
   int errs = 0;
@@ -738,29 +826,11 @@ static int openclaw_eject(const std::string& config_dir, bool yes) {
   remove_if_empty_dir(fs::path(config_dir) / "extensions");
 
   fs::path cfg_path = fs::path(config_dir) / "openclaw.json";
-  if (fs::exists(cfg_path)) {
-    try {
-      std::ifstream in(cfg_path);
-      std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-      nlohmann::json cfg = nlohmann::json::parse(raw);
-      if (cfg.contains("plugins") && cfg["plugins"].is_object() && cfg["plugins"].contains("entries") &&
-          cfg["plugins"]["entries"].is_object()) {
-        cfg["plugins"]["entries"].erase("mnemon");
-        std::string out = cfg.dump(2);
-        out.push_back('\n');
-        fs::path tmp = cfg_path;
-        tmp += ".tmp";
-        {
-          std::ofstream o(tmp, std::ios::trunc);
-          o << out;
-        }
-        fs::rename(tmp, cfg_path);
-        chmod_path(cfg_path, 0600);
-      }
-    } catch (...) {
-      // best-effort
-    }
+  if (std::string err = remove_openclaw_plugin_entry(cfg_path); !err.empty()) {
+    status_error("Config", err);
+    ++errs;
   }
+
   remove_if_empty_dir(config_dir);
   eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
   return errs;
