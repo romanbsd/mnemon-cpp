@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=d70697af6b85e0310a0e89b4a3032bfb551bf05a
-last_sha_subject=fix: raise cosine dedup threshold to prevent same-domain false UPDATE
-last_sha_date=2026-05-17T09:57:59Z
+last_sha=8dc68a97f112b3d8be07f84ece34902a0836d464
+last_sha_subject=fix: use Jaccard similarity in dedup to prevent same-domain false UPDATE
+last_sha_date=2026-05-17T09:58:00Z

@@ -67,7 +67,7 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
 
   std::vector<DiffMatch> matches;
   for (const auto& c : candidates) {
-    double token_sim = content_similarity(new_content, c.insight.content);
+    double token_sim = jaccard_similarity(new_content, c.insight.content);
     double cosine_sim = 0;
     if (!opts.new_embedding.empty()) {
       auto it = embed_map.find(c.insight.id);
@@ -117,7 +117,7 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
       if (it == id_to_ins.end()) {
         continue;
       }
-      double token_sim = content_similarity(new_content, it->second.content);
+      double token_sim = jaccard_similarity(new_content, it->second.content);
       double similarity = token_sim;
       if (cp.sim >= 0.85 && cp.sim > similarity) {
         similarity = cp.sim;
