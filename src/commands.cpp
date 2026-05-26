@@ -23,6 +23,7 @@
 #include <CLI/CLI.hpp>
 
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -190,6 +191,36 @@ static nlohmann::json recall_result_json(const mnemon::search_engine::RecallResu
                   {"entity", r.signals.entity},
                   {"similarity", r.signals.similarity},
                   {"graph", r.signals.graph}};
+  return j;
+}
+
+static double round_score(double s) {
+  return std::round(s * 1000.0) / 1000.0;
+}
+
+static std::string confidence_label(double score) {
+  if (score < 0.25) return "low";
+  if (score < 0.6) return "medium";
+  return "high";
+}
+
+static nlohmann::json compact_recall_result_json(const mnemon::search_engine::RecallResult& r) {
+  double rounded = round_score(r.score);
+  nlohmann::json j;
+  j["id"] = r.insight.id;
+  j["content"] = r.insight.content;
+  if (!r.insight.category.empty()) {
+    j["category"] = r.insight.category;
+  }
+  if (r.insight.importance != 0) {
+    j["importance"] = r.insight.importance;
+  }
+  j["intent"] = mnemon::search_engine::intent_str(r.intent);
+  if (!r.via.empty()) {
+    j["matched_via"] = r.via;
+  }
+  j["confidence"] = confidence_label(rounded);
+  j["score"] = rounded;
   return j;
 }
 
@@ -432,6 +463,7 @@ int run_mnemon(int argc, char** argv) {
   int rec_limit = 10;
   bool rec_basic = false;
   bool rec_smart = false;
+  bool rec_verbose = false;
   std::string rec_intent;
   recall->add_option("query", rec_parts)->required()->expected(-1);
   recall->add_option("--cat", rec_cat);
@@ -440,6 +472,7 @@ int run_mnemon(int argc, char** argv) {
   recall->add_flag("--basic", rec_basic);
   recall->add_flag("--smart", rec_smart)->group("");
   recall->add_option("--intent", rec_intent);
+  recall->add_flag("--verbose", rec_verbose, "output full recall response (signals, meta, timestamps)");
   recall->callback([&] {
     require_positive_limit("--limit", rec_limit);
     std::string rec_query;
@@ -494,22 +527,35 @@ int run_mnemon(int argc, char** argv) {
       db->increment_access_count(r.insight.id);
     }
     db->log_op("recall", "", "q=" + rec_query + " hits=" + std::to_string(resp.results.size()));
-    nlohmann::json out;
-    nlohmann::json rj = nlohmann::json::array();
-    for (const auto& r : resp.results) {
-      rj.push_back(recall_result_json(r));
+    if (rec_verbose) {
+      nlohmann::json out;
+      nlohmann::json rj = nlohmann::json::array();
+      for (const auto& r : resp.results) {
+        rj.push_back(recall_result_json(r));
+      }
+      out["results"] = rj;
+      nlohmann::json meta;
+      meta["intent"] = mnemon::search_engine::intent_str(resp.meta.intent);
+      meta["intent_source"] = resp.meta.intent_source;
+      meta["anchor_count"] = resp.meta.anchor_count;
+      meta["traversed"] = resp.meta.traversed;
+      if (!resp.meta.hint.empty()) {
+        meta["hint"] = resp.meta.hint;
+      }
+      out["meta"] = meta;
+      print_json(out);
+    } else {
+      nlohmann::json out;
+      nlohmann::json rj = nlohmann::json::array();
+      for (const auto& r : resp.results) {
+        rj.push_back(compact_recall_result_json(r));
+      }
+      out["results"] = rj;
+      if (!resp.meta.hint.empty()) {
+        out["hint"] = resp.meta.hint;
+      }
+      print_json(out);
     }
-    out["results"] = rj;
-    nlohmann::json meta;
-    meta["intent"] = mnemon::search_engine::intent_str(resp.meta.intent);
-    meta["intent_source"] = resp.meta.intent_source;
-    meta["anchor_count"] = resp.meta.anchor_count;
-    meta["traversed"] = resp.meta.traversed;
-    if (!resp.meta.hint.empty()) {
-      meta["hint"] = resp.meta.hint;
-    }
-    out["meta"] = meta;
-    print_json(out);
   });
 
   // --- search ---
