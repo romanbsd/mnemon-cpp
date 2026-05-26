@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=f443aef4cd1fa1f160c25c369d5e8c2330b80a37
-last_sha_subject=docs(release): prepare v0.1.8 notes
-last_sha_date=2026-05-24T00:24:52Z
+last_sha=19e62f9fe25c5cbf37227d9772092321c9cb5e89
+last_sha_subject=feat(recall): make default output LLM-friendly
+last_sha_date=2026-05-26T10:12:47+08:00
