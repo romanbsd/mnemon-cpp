@@ -102,8 +102,57 @@ EOF
   echo "OK: test_push_failure_does_not_abort_sidecar_rewrite"
 }
 
+test_ancestor_fallback_for_unported_release_commit() {
+  # Simulates the common case: upstream tag points to a release-notes commit
+  # that was never ported. The script must find the most recent master commit
+  # whose Upstream-Commit trailer is an ancestor of the release commit.
+  local T="$TEST_TMP/ancestor_test"
+  mkdir -p "$T"
+
+  local UP="$T/upstream"
+  git init -q -b master "$UP"
+  git -C "$UP" config user.email "up@test"
+  git -C "$UP" config user.name "Up"
+  git -C "$UP" config commit.gpgsign false
+  git -C "$UP" commit -q --allow-empty -m "feat: the real work"
+  local UP_FEAT_SHA; UP_FEAT_SHA=$(git -C "$UP" rev-parse HEAD)
+  git -C "$UP" commit -q --allow-empty -m "chore(release): prepare v0.0.9 notes"
+  local UP_RELEASE_SHA; UP_RELEASE_SHA=$(git -C "$UP" rev-parse HEAD)
+
+  local LOC="$T/local"
+  git init -q -b master "$LOC"
+  git -C "$LOC" config user.email "lo@test"
+  git -C "$LOC" config user.name "Local"
+  git -C "$LOC" config commit.gpgsign false
+  git -C "$LOC" commit -q --allow-empty -m "initial"
+  git -C "$LOC" remote add upstream "$UP"
+  git -C "$LOC" fetch -q upstream
+
+  git -C "$LOC" commit -q --allow-empty -m "Port feat: the real work
+
+Upstream-Commit: $UP_FEAT_SHA"
+  local PORT_SHA; PORT_SHA=$(git -C "$LOC" rev-parse HEAD)
+
+  cat > "$LOC/.upstream-tag-pending" <<EOF
+v0.0.9=$UP_RELEASE_SHA
+EOF
+
+  local out
+  out=$(cd "$LOC" && RELEASE_TAGS_NO_PUSH=1 bash "$SCRIPT" --no-release 2>&1)
+
+  git -C "$LOC" rev-parse refs/tags/v0.0.9 >/dev/null \
+    || fail "ancestor-fallback: v0.0.9 not tagged; got: $out"
+  local tag_sha; tag_sha=$(git -C "$LOC" rev-parse refs/tags/v0.0.9)
+  [[ "$tag_sha" == "$PORT_SHA" ]] \
+    || fail "ancestor-fallback: tag at $tag_sha, want port commit $PORT_SHA"
+  grep -qE "^v0.0.9=" "$LOC/.upstream-tag-pending" \
+    && fail "ancestor-fallback: pending entry should be cleared"
+  echo "OK: test_ancestor_fallback_for_unported_release_commit"
+}
+
 test_dry_run_finds_trailer
 test_real_run_clears_matched_entry
 test_idempotent_rerun_with_existing_tag
 test_push_failure_does_not_abort_sidecar_rewrite
+test_ancestor_fallback_for_unported_release_commit
 echo "All release-tags tests passed."

@@ -58,6 +58,24 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     --grep="^Upstream-Commit: $upstream_sha\$" \
     --format=%H -n 1 2>/dev/null || true)
 
+  # Ancestor fallback: upstream version tags often point to release-notes commits
+  # that are never ported. Find the most recent master commit whose Upstream-Commit
+  # trailer refers to a commit that is an ancestor of (or equal to) the upstream
+  # release commit — i.e., the last port commit included in that version.
+  if [[ -z "$local_sha" ]] && \
+     git -C "$REPO_ROOT" cat-file -e "${upstream_sha}^{commit}" 2>/dev/null; then
+    while IFS= read -r candidate; do
+      us=$(git -C "$REPO_ROOT" log -1 --format="%B" "$candidate" \
+        | sed -n 's/^Upstream-Commit: //p' | head -1)
+      if [[ -n "$us" ]] && \
+         git -C "$REPO_ROOT" merge-base --is-ancestor "$us" "$upstream_sha" 2>/dev/null; then
+        local_sha="$candidate"
+        break
+      fi
+    done < <(git -C "$REPO_ROOT" log "$DEFAULT_BRANCH" \
+      --grep="Upstream-Commit:" --format="%H" 2>/dev/null)
+  fi
+
   if [[ -z "$local_sha" ]] && command -v gh >/dev/null 2>&1; then
     local_sha=$(gh pr list --state merged \
       --search "Upstream-Commit: $upstream_sha in:body" \
@@ -98,7 +116,7 @@ done < "$PENDING_FILE"
 
 if [[ ${#mirrored[@]} -gt 0 && $DRY_RUN -eq 0 ]]; then
   : > "$PENDING_FILE"
-  for line in "${new_lines[@]}"; do
+  for line in ${new_lines[@]+"${new_lines[@]}"}; do
     printf '%s\n' "$line" >> "$PENDING_FILE"
   done
   echo "release-tags: cleared ${#mirrored[@]} entries: ${mirrored[*]}"
