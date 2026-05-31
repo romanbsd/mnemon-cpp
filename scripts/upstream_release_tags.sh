@@ -54,7 +54,8 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     continue
   fi
 
-  local_sha=$(git -C "$REPO_ROOT" log "$DEFAULT_BRANCH" \
+  # Primary: find a port commit on master with an exact Upstream-Commit trailer match.
+  port_sha=$(git -C "$REPO_ROOT" log "$DEFAULT_BRANCH" \
     --grep="^Upstream-Commit: $upstream_sha\$" \
     --format=%H -n 1 2>/dev/null || true)
 
@@ -62,18 +63,28 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   # that are never ported. Find the most recent master commit whose Upstream-Commit
   # trailer refers to a commit that is an ancestor of (or equal to) the upstream
   # release commit — i.e., the last port commit included in that version.
-  if [[ -z "$local_sha" ]] && \
+  if [[ -z "$port_sha" ]] && \
      git -C "$REPO_ROOT" cat-file -e "${upstream_sha}^{commit}" 2>/dev/null; then
     while IFS= read -r candidate; do
       us=$(git -C "$REPO_ROOT" log -1 --format="%B" "$candidate" \
         | sed -n 's/^Upstream-Commit: //p' | head -1)
       if [[ -n "$us" ]] && \
          git -C "$REPO_ROOT" merge-base --is-ancestor "$us" "$upstream_sha" 2>/dev/null; then
-        local_sha="$candidate"
+        port_sha="$candidate"
         break
       fi
     done < <(git -C "$REPO_ROOT" log "$DEFAULT_BRANCH" \
       --grep="Upstream-Commit:" --format="%H" 2>/dev/null)
+  fi
+
+  # Prefer the merge commit on the default branch that contains the port commit,
+  # so the tag lands on a commit that is a direct parent in master's first-parent chain.
+  local_sha=""
+  if [[ -n "$port_sha" ]]; then
+    merge_sha=$(git -C "$REPO_ROOT" log "$DEFAULT_BRANCH" --ancestry-path \
+      --merges --format="%H" "${port_sha}..${DEFAULT_BRANCH}" 2>/dev/null \
+      | tail -1 || true)
+    local_sha="${merge_sha:-$port_sha}"
   fi
 
   if [[ -z "$local_sha" ]] && command -v gh >/dev/null 2>&1; then
@@ -94,19 +105,33 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     continue
   fi
 
+  existing_sha=""
   if git -C "$REPO_ROOT" rev-parse "refs/tags/$local_tag" >/dev/null 2>&1; then
-    echo "release-tags: $local_tag already tagged locally, skipping tag creation"
+    existing_sha=$(git -C "$REPO_ROOT" rev-parse "refs/tags/$local_tag")
+  fi
+
+  if [[ -n "$existing_sha" && "$existing_sha" == "$local_sha" ]]; then
+    echo "release-tags: $local_tag already correctly tagged at $local_sha"
+  elif [[ -n "$existing_sha" ]]; then
+    echo "release-tags: $local_tag exists at wrong commit ($existing_sha), moving to $local_sha"
+    git -C "$REPO_ROOT" tag -f "$local_tag" "$local_sha"
   else
     echo "release-tags: tagging $local_tag at $local_sha"
     git -C "$REPO_ROOT" tag "$local_tag" "$local_sha"
   fi
   if [[ "${RELEASE_TAGS_NO_PUSH:-0}" != "1" ]]; then
-    if ! git -C "$REPO_ROOT" push origin "$local_tag"; then
-      echo "release-tags: push failed for $local_tag (tag exists locally, will retry on next run)" >&2
+    push_flags=""
+    [[ -n "$existing_sha" && "$existing_sha" != "$local_sha" ]] && push_flags="--force"
+    if ! git -C "$REPO_ROOT" push $push_flags origin "$local_tag"; then
+      echo "release-tags: push failed for $local_tag (will retry on next run)" >&2
     fi
   fi
 
   if [[ $SKIP_RELEASE -eq 0 ]] && command -v gh >/dev/null 2>&1; then
+    # Delete any existing release that points to the wrong commit before re-creating.
+    if [[ -n "$existing_sha" && "$existing_sha" != "$local_sha" ]]; then
+      gh release delete "$local_tag" --yes 2>/dev/null || true
+    fi
     gh release create "$local_tag" --generate-notes --target "$local_sha" \
       || echo "release-tags: gh release create failed for $local_tag (continuing)" >&2
   fi

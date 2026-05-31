@@ -67,15 +67,15 @@ resolve_upstream_branch() {
 
 unshallow_if_needed() {
   if [[ "$(git -C "$REPO_ROOT" rev-parse --is-shallow-repository 2>/dev/null || echo false)" == "true" ]]; then
-    git -C "$REPO_ROOT" fetch upstream --unshallow --quiet || true
+    git -C "$REPO_ROOT" fetch upstream --no-tags --unshallow --quiet || true
   fi
 }
 
 fetch_upstream() {
   ensure_upstream_remote
   unshallow_if_needed
-  git -C "$REPO_ROOT" fetch upstream --quiet
-  # Build SHA→tag map without --tags (which would clobber locally-mirrored port tags).
+  git -C "$REPO_ROOT" fetch upstream --no-tags --quiet
+  # Build SHA→tag map via ls-remote (never import upstream tags into local refs).
   _UPSTREAM_TAG_MAP=$(git -C "$REPO_ROOT" ls-remote upstream 'refs/tags/*' 2>/dev/null || true)
 }
 
