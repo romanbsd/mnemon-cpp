@@ -1000,6 +1000,435 @@ int run_mnemon(int argc, char** argv) {
     mnemon::setup::run(ro);
   });
 
+  // --- import ---
+  auto* import_cmd = app.add_subcommand("import", "Import a memory draft file");
+  std::string import_file;
+  bool import_no_diff = false;
+  bool import_dry_run = false;
+  import_cmd->add_option("file", import_file, "memory draft JSON file (schema_version: \"1\")")->required();
+  import_cmd->add_flag("--no-diff", import_no_diff, "skip deduplication; insert all insights as new");
+  import_cmd->add_flag("--dry-run", import_dry_run, "validate the draft file without writing to the database");
+  import_cmd->callback([&] {
+    // --- parse and validate draft ---
+    std::ifstream f(import_file, std::ios::binary);
+    if (!f) {
+      throw std::runtime_error("read file: " + import_file + ": No such file or directory");
+    }
+    std::string raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    nlohmann::json draft_j;
+    try {
+      draft_j = nlohmann::json::parse(raw);
+    } catch (const std::exception& ex) {
+      throw std::runtime_error(std::string("parse JSON: ") + ex.what());
+    }
+
+    std::string schema_version = draft_j.value("schema_version", "");
+    if (schema_version != "1") {
+      throw std::runtime_error("invalid draft: unsupported schema_version \"" + schema_version + "\" (expected \"1\")");
+    }
+    if (!draft_j.contains("insights") || !draft_j["insights"].is_array()) {
+      throw std::runtime_error("invalid draft: insights array is empty; nothing to import");
+    }
+    auto& j_insights = draft_j["insights"];
+    if (j_insights.empty()) {
+      throw std::runtime_error("invalid draft: insights array is empty; nothing to import");
+    }
+
+    std::string draft_source = draft_j.value("source", "");
+
+    struct DraftInsight {
+      std::string content;
+      std::string category;
+      int importance{3};
+      std::vector<std::string> tags;
+      std::vector<std::string> entities;
+      std::string source;
+      std::string created_at;
+    };
+    struct DraftEdge {
+      int source_index{0};
+      int target_index{0};
+      std::string edge_type;
+      double weight{0.5};
+      std::string reason;
+    };
+
+    std::vector<DraftInsight> draft_insights;
+    for (size_t i = 0; i < j_insights.size(); ++i) {
+      const auto& ji = j_insights[i];
+      DraftInsight di;
+      di.content = ji.value("content", "");
+      if (di.content.empty()) {
+        throw std::runtime_error("invalid draft: insights[" + std::to_string(i) + "]: content is required");
+      }
+      if (di.content.size() > 8000) {
+        throw std::runtime_error("invalid draft: insights[" + std::to_string(i) + "]: content too long (" +
+                                 std::to_string(di.content.size()) + " chars, max 8000)");
+      }
+      di.category = ji.value("category", "general");
+      if (di.category.empty()) di.category = "general";
+      if (!valid_category(di.category)) {
+        throw std::runtime_error("invalid draft: insights[" + std::to_string(i) + "]: invalid category \"" +
+                                 di.category + "\"");
+      }
+      di.importance = ji.value("importance", 0);
+      if (di.importance == 0) di.importance = 3;
+      if (di.importance < 1 || di.importance > 5) {
+        throw std::runtime_error("invalid draft: insights[" + std::to_string(i) + "]: importance must be 1-5, got " +
+                                 std::to_string(di.importance));
+      }
+      if (ji.contains("tags") && ji["tags"].is_array()) {
+        for (const auto& t : ji["tags"]) {
+          di.tags.push_back(t.get<std::string>());
+        }
+      }
+      if (di.tags.size() > 20) {
+        throw std::runtime_error("invalid draft: insights[" + std::to_string(i) + "]: too many tags (" +
+                                 std::to_string(di.tags.size()) + ", max 20)");
+      }
+      if (ji.contains("entities") && ji["entities"].is_array()) {
+        for (const auto& e : ji["entities"]) {
+          di.entities.push_back(e.get<std::string>());
+        }
+      }
+      if (di.entities.size() > 50) {
+        throw std::runtime_error("invalid draft: insights[" + std::to_string(i) + "]: too many entities (" +
+                                 std::to_string(di.entities.size()) + ", max 50)");
+      }
+      di.source = ji.value("source", "");
+      di.created_at = ji.value("created_at", "");
+      if (!di.created_at.empty()) {
+        try {
+          mnemon::time_util::parse_rfc3339(di.created_at);
+        } catch (...) {
+          throw std::runtime_error("invalid draft: insights[" + std::to_string(i) +
+                                   "]: created_at \"" + di.created_at +
+                                   "\" is not RFC 3339 (e.g. 2024-01-15T09:30:00Z)");
+        }
+      }
+      draft_insights.push_back(std::move(di));
+    }
+
+    std::vector<DraftEdge> draft_edges;
+    if (draft_j.contains("edges") && draft_j["edges"].is_array()) {
+      int n = static_cast<int>(draft_insights.size());
+      for (size_t i = 0; i < draft_j["edges"].size(); ++i) {
+        const auto& je = draft_j["edges"][i];
+        DraftEdge de;
+        de.source_index = je.value("source_index", -1);
+        de.target_index = je.value("target_index", -1);
+        if (de.source_index < 0 || de.source_index >= n) {
+          throw std::runtime_error("invalid draft: edges[" + std::to_string(i) + "]: source_index " +
+                                   std::to_string(de.source_index) + " out of range [0," + std::to_string(n) + ")");
+        }
+        if (de.target_index < 0 || de.target_index >= n) {
+          throw std::runtime_error("invalid draft: edges[" + std::to_string(i) + "]: target_index " +
+                                   std::to_string(de.target_index) + " out of range [0," + std::to_string(n) + ")");
+        }
+        if (de.source_index == de.target_index) {
+          throw std::runtime_error("invalid draft: edges[" + std::to_string(i) +
+                                   "]: source_index and target_index must differ");
+        }
+        de.edge_type = je.value("edge_type", "");
+        auto et = mnemon::parse_edge_type(de.edge_type);
+        if (!et) {
+          throw std::runtime_error("invalid draft: edges[" + std::to_string(i) + "]: invalid edge_type \"" +
+                                   de.edge_type + "\" (valid: temporal, semantic, causal, entity)");
+        }
+        de.weight = je.value("weight", 0.0);
+        if (de.weight == 0.0) de.weight = 0.5;
+        if (de.weight < 0.0 || de.weight > 1.0) {
+          throw std::runtime_error("invalid draft: edges[" + std::to_string(i) + "]: weight " +
+                                   std::to_string(de.weight) + " out of range [0.0, 1.0]");
+        }
+        de.reason = je.value("reason", "");
+        draft_edges.push_back(std::move(de));
+      }
+    }
+
+    if (import_dry_run) {
+      std::cout << "Dry run: " << draft_insights.size() << " insights, " << draft_edges.size()
+                << " explicit edges — validation passed.\n";
+      return;
+    }
+
+    // --- write path ---
+    auto db = open_db();
+    mnemon::OllamaClient oc = mnemon::OllamaClient::from_env_with_model(resolve_embed_model());
+    const bool embedding_available = oc.available();
+
+    mnemon::graph_eng::EmbedCache embed_cache;
+    if (embedding_available) {
+      embed_cache = mnemon::graph_eng::build_embed_cache(*db);
+    }
+
+    // resolve source helper
+    auto resolved_source = [&](int idx) -> std::string {
+      if (!draft_insights[idx].source.empty()) return draft_insights[idx].source;
+      if (!draft_source.empty()) return draft_source;
+      return "import";
+    };
+
+    struct ImportResult {
+      int index{0};
+      std::string id;
+      std::string content;
+      std::string action;
+      std::string error;
+    };
+
+    std::map<int, std::string> imported;  // draft index → assigned insight ID
+    std::map<std::string, bool> imported_ids;
+    std::map<std::string, bool> imported_sources;
+    std::map<std::string, bool> refresh_ids;
+    std::vector<ImportResult> results;
+
+    for (int idx = 0; idx < static_cast<int>(draft_insights.size()); ++idx) {
+      const auto& di = draft_insights[idx];
+
+      mnemon::Insight insight;
+      insight.id = mnemon::new_uuid_v4();
+      insight.content = di.content;
+      insight.category = di.category;
+      insight.importance = di.importance;
+      insight.tags = di.tags;
+      insight.entities = di.entities;
+      insight.source = resolved_source(idx);
+
+      if (!di.created_at.empty()) {
+        insight.created_at = mnemon::time_util::parse_rfc3339(di.created_at);
+        insight.updated_at = insight.created_at;
+      } else {
+        auto now = mnemon::time_util::now_utc();
+        insight.created_at = now;
+        insight.updated_at = now;
+      }
+
+      // compute embedding before DB lock
+      std::vector<float> embed_vec;
+      if (embedding_available) {
+        try {
+          embed_vec = oc.embed(insight.content);
+          mnemon::normalize_vector(embed_vec);
+        } catch (...) {
+          embed_vec.clear();
+        }
+      }
+
+      std::string action;
+      std::string replaced_id;
+
+      if (import_no_diff) {
+        action = "added";
+      } else {
+        std::vector<mnemon::search_engine::EmbeddedItem> eitems;
+        for (const auto& [id, vec] : embed_cache) {
+          eitems.push_back({id, vec});
+        }
+        mnemon::search_engine::DiffOptions dopts;
+        dopts.limit = 5;
+        dopts.new_embedding = embed_vec;
+        dopts.existing_embed = std::move(eitems);
+        auto all_insights = db->get_all_active_insights();
+        auto dres = mnemon::search_engine::diff_insights(all_insights, insight.content, dopts);
+        if (dres.suggestion == mnemon::search_engine::DiffSuggestion::Duplicate) {
+          action = "skipped";
+          if (!dres.matches.empty()) replaced_id = dres.matches[0].id;
+        } else if (dres.suggestion == mnemon::search_engine::DiffSuggestion::Conflict ||
+                   dres.suggestion == mnemon::search_engine::DiffSuggestion::Update) {
+          action = "updated";
+          if (!dres.matches.empty()) replaced_id = dres.matches[0].id;
+        } else {
+          action = "added";
+        }
+      }
+
+      if (action == "skipped") {
+        db->log_op("import-skip", insight.id, "duplicate of " + replaced_id);
+        imported[idx] = !replaced_id.empty() ? replaced_id : insight.id;
+        results.push_back({idx, imported[idx], insight.content, action, ""});
+        continue;
+      }
+
+      std::string write_err;
+      try {
+        db->in_transaction([&] {
+          if (action == "updated" && !replaced_id.empty()) {
+            try {
+              db->soft_delete_insight(replaced_id);
+              db->log_op("import-replace", replaced_id, "replaced by " + insight.id);
+              embed_cache.erase(replaced_id);
+            } catch (const std::exception& ex) {
+              std::cerr << "warning: soft-delete " << replaced_id << ": " << ex.what() << "\n";
+            }
+          }
+          db->insert_insight(insight);
+          if (!embed_vec.empty()) {
+            db->update_embedding(insight.id, embed_vec);
+            embed_cache[insight.id] = embed_vec;
+          }
+          mnemon::graph_eng::on_insight_created(*db, insight, embedding_available ? &embed_cache : nullptr,
+                                                "merge", true);
+          if (!insight.entities.empty()) {
+            db->update_entities(insight.id, insight.entities);
+          }
+          db->refresh_effective_importance(insight.id);
+          db->log_op("import", insight.id, insight.content);
+        });
+      } catch (const std::exception& ex) {
+        write_err = ex.what();
+        embed_cache.clear();
+      }
+
+      if (!write_err.empty()) {
+        results.push_back({idx, insight.id, insight.content, "", write_err});
+        continue;
+      }
+
+      imported[idx] = insight.id;
+      imported_ids[insight.id] = true;
+      imported_sources[insight.source] = true;
+      refresh_ids[insight.id] = true;
+      results.push_back({idx, insight.id, insight.content, action, ""});
+    }
+
+    int edges_inserted = 0;
+    int pruned = 0;
+    try {
+      db->in_transaction([&] {
+        // insert explicit edges
+        for (const auto& de : draft_edges) {
+          auto si = imported.find(de.source_index);
+          auto ti = imported.find(de.target_index);
+          if (si == imported.end() || ti == imported.end()) continue;
+          const std::string& src_id = si->second;
+          const std::string& tgt_id = ti->second;
+          double w = de.weight;
+          if (w == 0.0) w = 0.5;
+          auto et = mnemon::parse_edge_type(de.edge_type);
+          if (!et) continue;
+          mnemon::Edge edge;
+          edge.source_id = src_id;
+          edge.target_id = tgt_id;
+          edge.edge_type = *et;
+          edge.weight = w;
+          if (!de.reason.empty()) edge.metadata["reason"] = de.reason;
+          edge.created_at = mnemon::time_util::now_utc();
+          try {
+            db->insert_edge(edge);
+            ++edges_inserted;
+            refresh_ids[src_id] = true;
+            refresh_ids[tgt_id] = true;
+          } catch (const std::exception& ex) {
+            std::cerr << "warning: insert explicit edge " << de.source_index << "->" << de.target_index
+                      << ": " << ex.what() << "\n";
+          }
+        }
+
+        // repair temporal edges for backdated imports
+        for (const auto& [source, _] : imported_sources) {
+          auto timeline = db->get_active_insights_by_source_ordered(source);
+          if (timeline.empty()) continue;
+
+          // find imported nodes in timeline and stitch temporal backbone
+          for (size_t i = 0; i < timeline.size(); ++i) {
+            if (!imported_ids.count(timeline[i].id)) continue;
+            // find nearest non-imported before and after
+            const mnemon::Insight* prev_existing = nullptr;
+            for (int j = static_cast<int>(i) - 1; j >= 0; --j) {
+              if (!imported_ids.count(timeline[j].id)) {
+                prev_existing = &timeline[j];
+                break;
+              }
+            }
+            const mnemon::Insight* next_existing = nullptr;
+            for (size_t j = i + 1; j < timeline.size(); ++j) {
+              if (!imported_ids.count(timeline[j].id)) {
+                next_existing = &timeline[j];
+                break;
+              }
+            }
+            if (prev_existing && next_existing) {
+              try {
+                db->delete_edge(prev_existing->id, next_existing->id, mnemon::EdgeType::temporal);
+                db->delete_edge(next_existing->id, prev_existing->id, mnemon::EdgeType::temporal);
+                refresh_ids[prev_existing->id] = true;
+                refresh_ids[next_existing->id] = true;
+              } catch (...) {}
+            }
+          }
+
+          // rebuild temporal backbone for the full timeline
+          auto now = mnemon::time_util::now_utc();
+          for (size_t i = 0; i + 1 < timeline.size(); ++i) {
+            const auto& prev = timeline[i];
+            const auto& next = timeline[i + 1];
+            if (!imported_ids.count(prev.id) && !imported_ids.count(next.id)) continue;
+            mnemon::Edge fwd;
+            fwd.source_id = prev.id;
+            fwd.target_id = next.id;
+            fwd.edge_type = mnemon::EdgeType::temporal;
+            fwd.weight = 1.0;
+            fwd.metadata = {{"sub_type", "backbone"}, {"direction", "precedes"}};
+            fwd.created_at = now;
+            try { db->insert_edge(fwd); } catch (...) {}
+            mnemon::Edge bwd;
+            bwd.source_id = next.id;
+            bwd.target_id = prev.id;
+            bwd.edge_type = mnemon::EdgeType::temporal;
+            bwd.weight = 1.0;
+            bwd.metadata = {{"sub_type", "backbone"}, {"direction", "succeeds"}};
+            bwd.created_at = now;
+            try { db->insert_edge(bwd); } catch (...) {}
+            refresh_ids[prev.id] = true;
+            refresh_ids[next.id] = true;
+          }
+        }
+
+        // refresh EI for all touched nodes
+        for (const auto& [id, _] : refresh_ids) {
+          try {
+            db->refresh_effective_importance(id);
+          } catch (const std::exception& ex) {
+            std::cerr << "warning: refresh EI for " << id << ": " << ex.what() << "\n";
+          }
+        }
+
+        pruned = db->auto_prune(mnemon::kMaxInsights, {});
+      });
+    } catch (const std::exception& ex) {
+      throw std::runtime_error(std::string("finalize import graph: ") + ex.what());
+    }
+
+    int count_added = 0, count_updated = 0, count_skipped = 0, count_errors = 0;
+    for (const auto& r : results) {
+      if (r.action == "added") ++count_added;
+      else if (r.action == "updated") ++count_updated;
+      else if (r.action == "skipped") ++count_skipped;
+      if (!r.error.empty()) ++count_errors;
+    }
+
+    nlohmann::json summary;
+    summary["imported"] = count_added;
+    summary["updated"] = count_updated;
+    summary["skipped"] = count_skipped;
+    summary["errors"] = count_errors;
+    summary["edges_inserted"] = edges_inserted;
+    summary["auto_pruned"] = pruned;
+    nlohmann::json res_arr = nlohmann::json::array();
+    for (const auto& r : results) {
+      nlohmann::json rj;
+      rj["index"] = r.index;
+      rj["id"] = r.id;
+      rj["content"] = r.content;
+      if (!r.action.empty()) rj["action"] = r.action;
+      if (!r.error.empty()) rj["error"] = r.error;
+      res_arr.push_back(rj);
+    }
+    summary["results"] = res_arr;
+    print_json(summary);
+  });
+
   // --- viz ---
   auto* viz = app.add_subcommand("viz", "Export knowledge graph for visualization");
   std::string viz_format = "dot";

@@ -106,7 +106,9 @@ public:
                                                      int limit);
   std::vector<Edge> get_all_edges();
 
+  void delete_edge(const std::string& source_id, const std::string& target_id, EdgeType edge_type);
   void delete_edges_by_node(const std::string& node_id);
+  std::vector<Insight> get_active_insights_by_source_ordered(const std::string& source);
 
   void log_op(const std::string& operation, const std::string& insight_id, const std::string& detail);
   std::vector<OplogEntry> get_oplog(int limit);
