@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=bfd09754da873305bfd11571760f692513d4e416
-last_sha_subject=feat(import): add mnemon import command with versioned draft schema (#41)
-last_sha_date=2026-05-27T23:01:36+08:00
+last_sha=a72c03b6f11bd7cc5c245efcf2e6c1bce6f1cae4
+last_sha_subject=docs(import): localize import guide and setup skill guidance
+last_sha_date=2026-05-27T15:14:30Z

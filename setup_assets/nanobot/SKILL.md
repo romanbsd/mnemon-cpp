@@ -23,6 +23,8 @@ mnemon remember "<fact>" --cat <cat> --imp <1-5> --entities "e1,e2" --source age
 mnemon link <id1> <id2> --type <type> --weight <0-1> [--meta '<json>']
 mnemon recall "<query>" --limit 10
 mnemon search "<query>" --limit 10
+mnemon import --dry-run <file>
+mnemon import <file>
 mnemon forget <id>
 mnemon related <id> --edge causal
 mnemon gc --threshold 0.4
@@ -43,6 +45,17 @@ Use the `exec` tool to run mnemon commands. Recall can run in the main conversat
 exec(command="mnemon recall 'user preferences'")
 exec(command="mnemon recall 'past decisions about auth'")
 ```
+
+## Import Historical Chats
+
+When the user asks to import old chats, notes, or exported context, create a
+`memory_draft.json` with `schema_version: "1"`, `insights` entries containing
+`content`, `category`, `importance`, `tags`, `entities`, and optional
+`created_at`, plus optional `edges` using `source_index`, `target_index`,
+`edge_type`, `weight`, and `reason`. Run `mnemon import --dry-run <file>`,
+then run `mnemon import <file>` only after validation passes. After import,
+verify with `mnemon status` and a focused `mnemon search` or `mnemon recall`.
+Check the output `errors` field because imports can partially succeed.
 
 ## Guardrails
 
