@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=63fe7ddbd6f46f8c9939ba7f6091da63716304b0
-last_sha_subject=docs(release): prepare v0.1.9 notes
-last_sha_date=2026-05-26T02:15:50Z
+last_sha=5cefdb8d1ef48a6fafeab12a059e8f80672c86a8
+last_sha_subject=fix(claude): use valid memory subagent type (#40)
+last_sha_date=2026-05-27T21:30:38+08:00
