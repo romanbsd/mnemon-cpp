@@ -19,7 +19,8 @@ struct EdgeStats {
 };
 
 EdgeStats on_insight_created(Database& db, Insight& insight, EmbedCache* embed_cache,
-                             const std::string& entity_mode = "merge");
+                             const std::string& entity_mode = "merge",
+                             bool temporal_disabled = false);
 
 } // namespace graph_eng
 } // namespace mnemon

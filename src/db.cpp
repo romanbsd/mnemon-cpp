@@ -1033,11 +1033,33 @@ std::vector<Edge> Database::get_all_edges() {
   return out;
 }
 
+void Database::delete_edge(const std::string& source_id, const std::string& target_id,
+                           EdgeType edge_type) {
+  Statement st(db_, "DELETE FROM edges WHERE source_id = ? AND target_id = ? AND edge_type = ?");
+  st.bind_text(1, source_id);
+  st.bind_text(2, target_id);
+  st.bind_text(3, edge_type_str(edge_type));
+  st.step();
+}
+
 void Database::delete_edges_by_node(const std::string& node_id) {
   Statement st(db_, "DELETE FROM edges WHERE source_id = ? OR target_id = ?");
   st.bind_text(1, node_id);
   st.bind_text(2, node_id);
   st.step();
+}
+
+std::vector<Insight> Database::get_active_insights_by_source_ordered(const std::string& source) {
+  Statement st(db_,
+               "SELECT id, content, category, importance, tags, entities, source, access_count, created_at, updated_at, "
+               "deleted_at FROM insights WHERE source = ? AND deleted_at IS NULL "
+               "ORDER BY created_at ASC, rowid ASC");
+  st.bind_text(1, source);
+  std::vector<Insight> out;
+  while (st.step()) {
+    out.push_back(scan_insight_row(st));
+  }
+  return out;
 }
 
 // Audit trail; trimmed lazily to kMaxOplogEntries. Read-only and failures are best-effort (stderr only).

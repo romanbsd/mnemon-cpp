@@ -11,10 +11,12 @@
 namespace mnemon::graph_eng {
 
 EdgeStats on_insight_created(Database& db, Insight& insight, EmbedCache* embed_cache,
-                             const std::string& entity_mode) {
+                             const std::string& entity_mode, bool temporal_disabled) {
   EdgeStats s;
   insight.entities = resolve_entities(insight.content, insight.entities, entity_mode);
-  s.temporal = create_temporal_edges(db, insight);
+  if (!temporal_disabled) {
+    s.temporal = create_temporal_edges(db, insight);
+  }
   s.entity = create_entity_edges(db, insight);
   s.causal = create_causal_edges(db, insight);
   s.semantic = create_semantic_edges(db, insight, embed_cache);

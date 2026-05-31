@@ -982,6 +982,76 @@ step "--embed-model overrides MNEMON_EMBED_MODEL env var"
 OUT=$(MNEMON_EMBED_MODEL="env-model" $M --data-dir "$EMBEDMODEL_DIR" --embed-model "flag-model" embed --status 2>&1)
 assert_contains "embed-model flag overrides env" "$OUT" "ollama_available"
 
+banner "Milestone 14: Import Command"
+IMPORT_DIR="$TESTDATA/import"
+mkdir -p "$IMPORT_DIR"
+
+step "import — dry-run validates draft without writing"
+cat > "$IMPORT_DIR/draft_basic.json" << 'DRAFTEOF'
+{
+  "schema_version": "1",
+  "source": "chat-export",
+  "insights": [
+    {
+      "content": "User prefers concise answers in English.",
+      "category": "preference",
+      "importance": 4,
+      "tags": ["ux"],
+      "created_at": "2024-01-15T09:30:00Z"
+    }
+  ]
+}
+DRAFTEOF
+OUT=$($M --data-dir "$IMPORT_DIR" import --dry-run "$IMPORT_DIR/draft_basic.json" 2>&1)
+assert_contains "dry-run output" "$OUT" "Dry run"
+
+step "import — basic import returns expected JSON fields"
+OUT=$($M --data-dir "$IMPORT_DIR" import "$IMPORT_DIR/draft_basic.json" 2>&1)
+assert_jq "imported count is 1"      "$OUT" '.imported'      '1'
+assert_jq "updated count is 0"       "$OUT" '.updated'       '0'
+assert_jq "skipped count is 0"       "$OUT" '.skipped'       '0'
+assert_jq "errors count is 0"        "$OUT" '.errors'        '0'
+assert_jq "edges_inserted is 0"      "$OUT" '.edges_inserted' '0'
+assert_jq "results is an array"      "$OUT" '.results | type' 'array'
+assert_jq "results[0].action added"  "$OUT" '.results[0].action' 'added'
+
+step "import — explicit edge is inserted"
+cat > "$IMPORT_DIR/draft_edges.json" << 'DRAFTEOF'
+{
+  "schema_version": "1",
+  "insights": [
+    {"content": "alpha insight for edge test", "category": "fact", "importance": 3},
+    {"content": "beta insight for edge test",  "category": "fact", "importance": 3}
+  ],
+  "edges": [
+    {"source_index": 0, "target_index": 1, "edge_type": "semantic", "weight": 0.8, "reason": "related topics"}
+  ]
+}
+DRAFTEOF
+OUT=$($M --data-dir "$IMPORT_DIR" import --no-diff "$IMPORT_DIR/draft_edges.json" 2>&1)
+assert_jq "edges_inserted is 1" "$OUT" '.edges_inserted' '1'
+
+step "import — bad schema_version is rejected"
+cat > "$IMPORT_DIR/bad_schema.json" << 'DRAFTEOF'
+{"schema_version": "99", "insights": [{"content": "test"}]}
+DRAFTEOF
+OUT=$($M --data-dir "$IMPORT_DIR" import "$IMPORT_DIR/bad_schema.json" 2>&1 || true)
+assert_contains "schema version error" "$OUT" "schema_version"
+
+step "import — empty insights array is rejected"
+cat > "$IMPORT_DIR/empty_insights.json" << 'DRAFTEOF'
+{"schema_version": "1", "insights": []}
+DRAFTEOF
+OUT=$($M --data-dir "$IMPORT_DIR" import "$IMPORT_DIR/empty_insights.json" 2>&1 || true)
+assert_contains "empty insights error" "$OUT" "empty"
+
+step "import — invalid category is rejected"
+cat > "$IMPORT_DIR/bad_cat.json" << 'DRAFTEOF'
+{"schema_version": "1", "insights": [{"content": "x", "category": "note"}]}
+DRAFTEOF
+OUT=$($M --data-dir "$IMPORT_DIR" import "$IMPORT_DIR/bad_cat.json" 2>&1 || true)
+assert_contains "invalid category error" "$OUT" "category"
+
 banner "Milestone 13: Privacy-Safe Memory Receipts"
 RECEIPT_DIR="$TESTDATA/receipt"
 mkdir -p "$RECEIPT_DIR"
