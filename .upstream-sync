@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=dd1d61de1bda7b43890262b1c06ce79c29510756
-last_sha_subject=fix(setup): scope prompt files to MNEMON_DATA_DIR (#42)
-last_sha_date=2026-05-31T13:27:04+08:00
+last_sha=efbbd85d8e662e8fb0ab061566bf09eaeebf2143
+last_sha_subject=fix(setup): align OpenClaw prompt path with MNEMON_DATA_DIR
+last_sha_date=2026-05-31T10:22:08Z
