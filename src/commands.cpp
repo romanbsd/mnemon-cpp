@@ -23,13 +23,16 @@
 #include <CLI/CLI.hpp>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <regex>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -107,6 +110,107 @@ static std::string resolve_store() {
     return e;
   }
   return mnemon::paths::read_active(g_data_dir);
+}
+
+// --- harness event seam ---
+
+static const std::regex kEventTopicPattern{R"(^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$)"};
+
+static std::string event_log_path(const std::string& root) {
+  if (const char* ov = std::getenv("MNEMON_HARNESS_EVENTLOG"); ov && *ov) {
+    std::string s = ov;
+    if (s.size() >= 6 && s.rfind(".jsonl") == s.size() - 6) {
+      return fs::path(s).lexically_normal().string();
+    }
+    return (fs::path(s) / "events.jsonl").string();
+  }
+  fs::path r = root.empty() ? fs::path(".") : fs::path(root);
+  return (r.lexically_normal() / ".mnemon" / "events.jsonl").string();
+}
+
+struct HarnessEventOpts {
+  std::string root;
+  std::string topic;
+  nlohmann::json payload = nlohmann::json::object();
+  std::string correlation_id;
+  std::string loop;
+  std::string host;
+  std::string actor;
+  std::string source;
+  std::string store;
+};
+
+static std::pair<std::string, std::string> emit_harness_event(const HarnessEventOpts& opts) {
+  if (!std::regex_match(opts.topic, kEventTopicPattern)) {
+    throw std::runtime_error("event topic must be lower-case dot-separated");
+  }
+  auto now = std::chrono::system_clock::now();
+  auto secs = std::chrono::time_point_cast<std::chrono::seconds>(now);
+  auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now - secs).count();
+  std::time_t t = std::chrono::system_clock::to_time_t(secs);
+  std::tm tm_buf = {};
+#ifdef _WIN32
+  gmtime_s(&tm_buf, &t);
+#else
+  gmtime_r(&t, &tm_buf);
+#endif
+  char date_buf[32], rfc_buf[32];
+  std::strftime(date_buf, sizeof(date_buf), "%Y%m%dT%H%M%S", &tm_buf);
+  std::strftime(rfc_buf, sizeof(rfc_buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+  std::string topic_snake = opts.topic;
+  for (auto& c : topic_snake) if (c == '.') c = '_';
+  std::ostringstream id_oss;
+  id_oss << "evt_" << topic_snake << "_" << date_buf
+         << "." << std::setfill('0') << std::setw(9) << ns;
+  std::string event_id = id_oss.str();
+  std::string corr_id = opts.correlation_id.empty() ? ("event:" + mnemon::new_uuid_v4()) : opts.correlation_id;
+  static const std::array<const char*, 8> kAllowedActors{
+      "user", "host-agent", "mnemon-manual", "mnemon-daemon",
+      "host-runner", "reconciler", "projector", "validator"};
+  std::string actor = opts.actor.empty() ? "mnemon-manual" : opts.actor;
+  bool actor_ok = false;
+  for (const char* a : kAllowedActors)
+    if (actor == a) { actor_ok = true; break; }
+  if (!actor_ok) throw std::runtime_error("actor \"" + actor + "\" is not allowed");
+  std::string source = opts.source.empty() ? "mnemon.event_emit" : opts.source;
+  nlohmann::json event;
+  event["schema_version"] = 1;
+  event["id"] = event_id;
+  event["ts"] = std::string(rfc_buf);
+  event["type"] = opts.topic;
+  event["loop"] = opts.loop.empty() ? nlohmann::json(nullptr) : nlohmann::json(opts.loop);
+  event["host"] = opts.host.empty() ? nlohmann::json(nullptr) : nlohmann::json(opts.host);
+  event["actor"] = actor;
+  event["source"] = source;
+  event["correlation_id"] = corr_id;
+  event["caused_by"] = nullptr;
+  event["payload"] = opts.payload.is_null() ? nlohmann::json::object() : opts.payload;
+  if (!opts.store.empty()) event["store"] = opts.store;
+  std::string path = event_log_path(opts.root);
+  fs::create_directories(fs::path(path).parent_path());
+  std::ofstream f(path, std::ios::binary | std::ios::app);
+  if (!f) throw std::runtime_error("open event log: " + path);
+  f << event.dump() << '\n';
+  return {event_id, path};
+}
+
+static void emit_remember_event(const std::string& insight_id, const std::string& category,
+                                int importance, const std::string& action,
+                                const std::string& store_name) {
+  const char* flag = std::getenv("MNEMON_HARNESS_EVENT_EMIT");
+  if (!flag || std::string(flag) != "1") return;
+  HarnessEventOpts opts;
+  opts.root = ".";
+  opts.topic = "memory.hot_write_observed";
+  opts.correlation_id = "memory:" + insight_id;
+  opts.loop = "memory";
+  opts.host = "mnemon";
+  opts.actor = "mnemon-manual";
+  opts.source = "mnemon.remember";
+  opts.store = store_name;
+  opts.payload = {{"insight_id", insight_id}, {"category", category},
+                  {"importance", importance}, {"action", action}};
+  try { emit_harness_event(opts); } catch (...) {}
 }
 
 static std::unique_ptr<mnemon::Database> open_db() {
@@ -452,6 +556,7 @@ int run_mnemon(int argc, char** argv) {
     if (!replaced_id.empty()) {
       o["replaced_id"] = replaced_id;
     }
+    emit_remember_event(insight.id, insight.category, insight.importance, diff_action, resolve_store());
     print_json(o);
   });
 
@@ -977,6 +1082,42 @@ int run_mnemon(int argc, char** argv) {
     }
     fs::remove_all(mnemon::paths::store_dir(g_data_dir, st_remname));
     std::cout << "Removed store \"" << st_remname << "\"\n";
+  });
+
+  // --- event ---
+  auto* event_cmd = app.add_subcommand("event", "Emit Mnemon harness lifecycle events");
+  auto* event_emit_cmd = event_cmd->add_subcommand("emit", "Append one lifecycle event to the harness eventlog");
+  std::string ev_topic;
+  std::string ev_root = ".";
+  std::string ev_payload_str = "{}";
+  std::string ev_correlation_id;
+  std::string ev_loop;
+  std::string ev_host;
+  event_emit_cmd->add_option("topic", ev_topic)->required();
+  event_emit_cmd->add_option("--root", ev_root, "project root whose .mnemon/events.jsonl should receive the event");
+  event_emit_cmd->add_option("--payload", ev_payload_str, "event payload JSON object");
+  event_emit_cmd->add_option("--correlation-id", ev_correlation_id, "correlation id; generated when unset");
+  event_emit_cmd->add_option("--loop", ev_loop, "loop id associated with the event");
+  event_emit_cmd->add_option("--host", ev_host, "host id associated with the event");
+  event_emit_cmd->callback([&] {
+    nlohmann::json payload = nlohmann::json::object();
+    if (!ev_payload_str.empty() && ev_payload_str != "{}") {
+      try {
+        payload = nlohmann::json::parse(ev_payload_str);
+      } catch (...) {
+        throw std::runtime_error("decode payload: invalid JSON");
+      }
+    }
+    HarnessEventOpts opts;
+    opts.root = ev_root;
+    opts.topic = ev_topic;
+    opts.payload = payload;
+    opts.correlation_id = ev_correlation_id;
+    opts.loop = ev_loop;
+    opts.host = ev_host;
+    auto [event_id, path] = emit_harness_event(opts);
+    std::cout << "emitted " << event_id << "\n";
+    std::cout << "path: " << path << "\n";
   });
 
   // --- setup ---
