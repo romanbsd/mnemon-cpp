@@ -918,6 +918,24 @@ OUT=$($M --data-dir "$SETUPDIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions codex" "$OUT" "codex"
 
 # ══════════════════════════════════════════════════════════════════════
+banner "Setup: MNEMON_DATA_DIR prompt path"
+# ══════════════════════════════════════════════════════════════════════
+
+PROMPTDIR_TEST="$TESTDATA/setup_prompt_dir"
+mkdir -p "$PROMPTDIR_TEST"
+
+step "setup --target nanobot with MNEMON_DATA_DIR — output shows custom prompt path"
+OUT=$(MNEMON_DATA_DIR="$PROMPTDIR_TEST" $M --data-dir "$TESTDATA/setup_prompt_dir_db" setup --target nanobot --yes 2>&1 || true)
+assert_contains "prompt path reflects MNEMON_DATA_DIR" "$OUT" "$PROMPTDIR_TEST/prompt"
+
+step "setup prompt files written under MNEMON_DATA_DIR"
+if [ -f "$PROMPTDIR_TEST/prompt/guide.md" ]; then
+  pass "guide.md under MNEMON_DATA_DIR" "(file exists)"
+else
+  fail "guide.md under MNEMON_DATA_DIR" "(file missing: $PROMPTDIR_TEST/prompt/guide.md)"
+fi
+
+# ══════════════════════════════════════════════════════════════════════
 banner "Setup eject: markdown cleanup"
 # ══════════════════════════════════════════════════════════════════════
 

@@ -1,5 +1,11 @@
 #!/bin/bash
-PROMPT_DIR="${HOME}/.mnemon/prompt"
+PROMPT_DIR="${MNEMON_DATA_DIR:-$HOME/.mnemon}/prompt"
+# Fall back to legacy location if the resolved path has no guide yet but the
+# legacy ~/.mnemon/prompt/ does — preserves existing installs that pre-date
+# MNEMON_DATA_DIR-aware setup.
+if [ ! -f "${PROMPT_DIR}/guide.md" ] && [ -f "${HOME}/.mnemon/prompt/guide.md" ]; then
+  PROMPT_DIR="${HOME}/.mnemon/prompt"
+fi
 
 if ! command -v mnemon >/dev/null 2>&1; then
   echo "[mnemon] Warning: mnemon not found in PATH."

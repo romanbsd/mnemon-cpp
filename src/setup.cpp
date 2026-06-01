@@ -555,7 +555,13 @@ static std::vector<Environment> detect_environments(bool global) {
 // --- install pieces ---
 
 static fs::path write_prompt_files() {
-  fs::path prompt_dir = fs::path(home_dir()) / ".mnemon" / "prompt";
+  fs::path prompt_dir;
+  const char* data_dir_env = std::getenv("MNEMON_DATA_DIR");
+  if (data_dir_env && data_dir_env[0] != '\0') {
+    prompt_dir = fs::path(data_dir_env) / "prompt";
+  } else {
+    prompt_dir = fs::path(home_dir()) / ".mnemon" / "prompt";
+  }
   fs::create_directories(prompt_dir);
   write_bytes(prompt_dir / "guide.md", mnemon::embedded::claude_guide_md(), 0644);
   write_bytes(prompt_dir / "skill.md", mnemon::embedded::claude_SKILL_md(), 0644);
@@ -939,18 +945,20 @@ static bool install_nanobot(Environment env, bool global, bool setup_yes) {
     return false;
   }
   std::cout << "\n[2/2] Prompts\n";
+  std::string prompt_path;
   try {
     auto p = write_prompt_files();
     status_ok("Prompts", p.string());
+    prompt_path = p.string();
   } catch (const std::exception& e) {
     status_error("Prompts", e.what());
     return false;
   }
   std::cout << "\nSetup complete!\n";
   std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
-  std::cout << "  Prompts ~/.mnemon/prompt/ (guide.md, skill.md)\n";
+  std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n";
   std::cout << "\nRestart Nanobot to activate the mnemon skill.\n";
-  std::cout << "Edit ~/.mnemon/prompt/guide.md to customize behavior.\n";
+  std::cout << "Edit " << prompt_path << "/guide.md to customize behavior.\n";
   std::cout << "Run 'mnemon setup --eject' to remove.\n";
   return true;
 }
@@ -1101,9 +1109,11 @@ static bool install_codex(Environment env, bool global, bool setup_yes) {
   }
 
   std::cout << "\n[2/4] Prompts\n";
+  std::string prompt_path;
   try {
     fs::path p = write_prompt_files();
     status_ok("Prompts", p.string());
+    prompt_path = p.string();
   } catch (const std::exception& e) {
     status_error("Prompts", e.what());
     return false;
@@ -1144,7 +1154,7 @@ static bool install_codex(Environment env, bool global, bool setup_yes) {
   std::cout << "\nSetup complete!\n";
   std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
   std::cout << "  Hooks   " << config_dir << "/hooks.json (SessionStart, UserPromptSubmit, Stop)\n";
-  std::cout << "  Prompts ~/.mnemon/prompt/ (guide.md, skill.md)\n\n";
+  std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
   std::cout << "Start a new Codex session to activate.\n";
   std::cout << "Run 'mnemon setup --eject --target codex' to remove.\n";
   return true;
@@ -1193,9 +1203,11 @@ static bool install_claude_code(Environment env, bool global, bool setup_yes, co
   }
 
   std::cout << "\n[2/3] Prompts\n";
+  std::string prompt_path;
   try {
     fs::path p = write_prompt_files();
     status_ok("Prompts", p.string());
+    prompt_path = p.string();
   } catch (const std::exception& e) {
     status_error("Prompts", e.what());
     return false;
@@ -1248,9 +1260,9 @@ static bool install_claude_code(Environment env, bool global, bool setup_yes, co
   if (sel.compact) {
     std::cout << ", compact";
   }
-  std::cout << "\n  Prompts ~/.mnemon/prompt/ (guide.md, skill.md)\n\n";
+  std::cout << "\n  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
   std::cout << "Start a new Claude Code session to activate.\n";
-  std::cout << "Edit ~/.mnemon/prompt/guide.md to customize behavior.\n";
+  std::cout << "Edit " << prompt_path << "/guide.md to customize behavior.\n";
   std::cout << "Run 'mnemon setup --eject' to remove.\n";
 
   init_default_store(opt.data_dir);
@@ -1281,9 +1293,11 @@ static bool install_openclaw(Environment env, bool global, bool setup_yes, const
   }
 
   std::cout << "\n[2/4] Prompts\n";
+  std::string prompt_path;
   try {
     fs::path p = write_prompt_files();
     status_ok("Prompts", p.string());
+    prompt_path = p.string();
   } catch (const std::exception& e) {
     status_error("Prompts", e.what());
     return false;
@@ -1330,9 +1344,9 @@ static bool install_openclaw(Environment env, bool global, bool setup_yes, const
     std::cout << ", compact";
   }
   std::cout << ")\n";
-  std::cout << "  Prompts ~/.mnemon/prompt/ (guide.md, skill.md)\n\n";
+  std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
   std::cout << "Restart the OpenClaw gateway to activate.\n";
-  std::cout << "Edit ~/.mnemon/prompt/guide.md to customize behavior.\n";
+  std::cout << "Edit " << prompt_path << "/guide.md to customize behavior.\n";
   std::cout << "Run 'mnemon setup --eject' to remove.\n";
 
   init_default_store(opt.data_dir);
