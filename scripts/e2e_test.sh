@@ -1107,6 +1107,60 @@ step "receipt --limit controls max events"
 OUT=$($M --data-dir "$RECEIPT_DIR" receipt --limit 1 2>&1)
 assert_jq "receipt limit respected" "$OUT" '.events | length' '1'
 
+# ══════════════════════════════════════════════════════════════════════
+banner "Harness Event Seam: event emit command"
+# ══════════════════════════════════════════════════════════════════════
+
+EVENT_DIR="$TESTDATA/event_seam"
+mkdir -p "$EVENT_DIR"
+
+step "event emit — valid topic succeeds"
+OUT=$($M event emit memory.hot_write_observed --root "$EVENT_DIR" --payload '{"k":"v"}' --correlation-id corr-1 --loop memory --host mnemon 2>&1)
+assert_contains "event emit output has emitted" "$OUT" "emitted"
+assert_contains "event emit output has path" "$OUT" "path:"
+
+step "event emit — events.jsonl created under root"
+EVENTS_FILE="$EVENT_DIR/.mnemon/events.jsonl"
+if [ -f "$EVENTS_FILE" ]; then
+  pass "events.jsonl exists" "(found: $EVENTS_FILE)"
+else
+  fail "events.jsonl exists" "(not found: $EVENTS_FILE)"
+fi
+
+step "event emit — events.jsonl has correct type"
+assert_contains "events.jsonl type field" "$(cat "$EVENTS_FILE" 2>/dev/null)" '"memory.hot_write_observed"'
+
+step "event emit — events.jsonl has correlation_id"
+assert_contains "events.jsonl correlation_id" "$(cat "$EVENTS_FILE" 2>/dev/null)" '"corr-1"'
+
+step "event emit — events.jsonl has schema_version 1"
+assert_contains "events.jsonl schema_version" "$(cat "$EVENTS_FILE" 2>/dev/null)" '"schema_version":1'
+
+step "event emit — invalid topic rejected"
+OUT=$($M event emit not-a-valid-topic --root "$EVENT_DIR" 2>&1 || true)
+assert_contains "invalid topic rejected" "$OUT" "lower-case dot-separated"
+
+step "remember — no event emitted without MNEMON_HARNESS_EVENT_EMIT"
+EVENT_DIR2="$TESTDATA/event_seam2"
+mkdir -p "$EVENT_DIR2"
+OUT=$(cd "$EVENT_DIR2" && $M --data-dir "$EVENT_DIR2" remember "test memory" --category fact 2>&1)
+if [ -f "$EVENT_DIR2/.mnemon/events.jsonl" ]; then
+  fail "no event without flag" "(events.jsonl should not exist)"
+else
+  pass "no event without flag" "(events.jsonl absent)"
+fi
+
+step "remember — event emitted with MNEMON_HARNESS_EVENT_EMIT=1"
+EVENT_DIR3="$TESTDATA/event_seam3"
+mkdir -p "$EVENT_DIR3"
+EVENTS_LOG3="$EVENT_DIR3/remember_events.jsonl"
+OUT=$(cd "$EVENT_DIR3" && MNEMON_HARNESS_EVENT_EMIT=1 MNEMON_HARNESS_EVENTLOG="$EVENTS_LOG3" $M --data-dir "$EVENT_DIR3" remember "test memory event" --category fact 2>&1)
+if [ -f "$EVENTS_LOG3" ]; then
+  assert_contains "remember event type" "$(cat "$EVENTS_LOG3")" '"memory.hot_write_observed"'
+else
+  fail "remember event emitted" "(events.jsonl not found: $EVENTS_LOG3)"
+fi
+
 # ── Report ────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
