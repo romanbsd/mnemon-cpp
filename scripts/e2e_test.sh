@@ -917,6 +917,21 @@ step "setup --target bogus error mentions codex"
 OUT=$($M --data-dir "$SETUPDIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions codex" "$OUT" "codex"
 
+OPENCLAW_SETUP_DIR="$TESTDATA/setup_openclaw"
+mkdir -p "$OPENCLAW_SETUP_DIR"
+
+step "setup --target openclaw --yes — accepted (installs skill)"
+OUT=$(cd "$OPENCLAW_SETUP_DIR" && $M --data-dir "$OPENCLAW_SETUP_DIR" setup --target openclaw --yes 2>&1 || true)
+assert_contains "openclaw target accepted" "$OUT" "Skill"
+
+step "openclaw handler.js has MNEMON_DATA_DIR prompt support"
+HANDLER_JS="$OPENCLAW_SETUP_DIR/.openclaw/hooks/mnemon-prime/handler.js"
+if [ -f "$HANDLER_JS" ]; then
+  assert_contains "openclaw handler uses MNEMON_DATA_DIR" "$(cat "$HANDLER_JS")" "MNEMON_DATA_DIR"
+else
+  fail "openclaw handler.js exists" "(not found: $HANDLER_JS)"
+fi
+
 # ══════════════════════════════════════════════════════════════════════
 banner "Setup: MNEMON_DATA_DIR prompt path"
 # ══════════════════════════════════════════════════════════════════════

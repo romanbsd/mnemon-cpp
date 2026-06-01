@@ -1,9 +1,18 @@
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { execSync } from "child_process";
 
-const GUIDE_PATH = join(homedir(), ".mnemon", "prompt", "guide.md");
+const LEGACY_GUIDE_PATH = join(homedir(), ".mnemon", "prompt", "guide.md");
+
+function guidePath() {
+  const dataRoot = process.env.MNEMON_DATA_DIR || join(homedir(), ".mnemon");
+  const scopedPath = join(dataRoot, "prompt", "guide.md");
+  if (!existsSync(scopedPath) && existsSync(LEGACY_GUIDE_PATH)) {
+    return LEGACY_GUIDE_PATH;
+  }
+  return scopedPath;
+}
 
 const handler = async (event) => {
   if (event.type !== "agent" || event.action !== "bootstrap") return;
@@ -30,7 +39,7 @@ const handler = async (event) => {
 
   // Inject behavioral guide
   try {
-    const guide = readFileSync(GUIDE_PATH, "utf-8");
+    const guide = readFileSync(guidePath(), "utf-8");
     if (guide) parts.push(guide);
   } catch {
     // guide.md not found — skill-only mode, no guide injection
