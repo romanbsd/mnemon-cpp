@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=86b67e3ebecde5f2dac7f6fcbc07fd04c262ca6a
-last_sha_subject=feat(setup): add Pi integration
-last_sha_date=2026-05-31T12:51:50Z
+last_sha=722f3541f7d9a138ae9860b83a2cd4550dd34f98
+last_sha_subject=feat(setup): add Hermes Agent hook integration
+last_sha_date=2026-06-01T07:47:56Z

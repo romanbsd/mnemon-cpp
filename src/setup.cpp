@@ -573,9 +573,33 @@ static Environment detect_pi(bool global) {
   return env;
 }
 
+static Environment detect_hermes() {
+  Environment env;
+  env.name = "hermes";
+  env.display = "Hermes Agent";
+  fs::path global_dir = fs::path(home_dir()) / ".hermes";
+  env.config_dir = global_dir.string();
+
+  std::string bin;
+  if (look_path("hermes", bin)) {
+    env.detected = true;
+    env.bin_path = bin;
+    env.version = exec_version(bin);
+  }
+  std::error_code ec;
+  if (fs::exists(global_dir, ec)) {
+    env.detected = true;
+  }
+  fs::path skill = global_dir / "skills" / "mnemon" / "SKILL.md";
+  if (fs::exists(skill, ec)) {
+    env.installed = true;
+  }
+  return env;
+}
+
 static std::vector<Environment> detect_environments(bool global) {
   return {detect_claude(global), detect_codex(global), detect_openclaw(global), detect_nanobot(global),
-          detect_pi(global)};
+          detect_pi(global), detect_hermes()};
 }
 
 // --- install pieces ---
@@ -986,6 +1010,307 @@ static bool install_nanobot(Environment env, bool global, bool setup_yes) {
   std::cout << "\nRestart Nanobot to activate the mnemon skill.\n";
   std::cout << "Edit " << prompt_path << "/guide.md to customize behavior.\n";
   std::cout << "Run 'mnemon setup --eject' to remove.\n";
+  return true;
+}
+
+// --- hermes ---
+
+static fs::path hermes_write_skill(const std::string& config_dir) {
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  fs::create_directories(skill_dir);
+  fs::path p = skill_dir / "SKILL.md";
+  write_bytes(p, mnemon::embedded::hermes_SKILL_md(), 0644);
+  return p;
+}
+
+static fs::path hermes_write_hook(const std::string& config_dir, const std::string& filename,
+                                   std::string_view content) {
+  fs::path hooks_dir = fs::path(config_dir) / "agent-hooks" / "mnemon";
+  fs::create_directories(hooks_dir);
+  fs::path p = hooks_dir / filename;
+  write_bytes(p, content, 0755);
+  return p;
+}
+
+// Minimal YAML patcher: remove mnemon-owned entries then append new ones.
+// We write a simple YAML snippet; for files that don't exist we create from scratch.
+static fs::path hermes_register_hooks(const std::string& config_dir, const HookSelection& sel) {
+  fs::path hooks_dir = fs::path(config_dir) / "agent-hooks" / "mnemon";
+  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
+
+  fs::path cfg = fs::path(config_dir) / "config.yaml";
+  fs::create_directories(cfg.parent_path());
+
+  // Read existing config
+  std::string existing;
+  {
+    std::ifstream f(cfg);
+    if (f) {
+      std::ostringstream ss;
+      ss << f.rdbuf();
+      existing = ss.str();
+    }
+  }
+
+  // Strip existing mnemon hook lines (any block containing our hooks_dir path)
+  // Strategy: remove lines (and their parent list-entry lines) that reference our hooks_dir
+  auto strip_mnemon_entries = [&](const std::string& yaml) -> std::string {
+    std::string abs = abs_hooks_dir.string();
+    std::istringstream in(yaml);
+    std::string out, line;
+    std::string pending;
+    while (std::getline(in, line)) {
+      // If line is a list-entry marker ("    - "), hold it as pending
+      // If next line contains our hooks path, drop both
+      if (!pending.empty()) {
+        if (line.find(abs) != std::string::npos) {
+          pending.clear(); // drop the "- " marker and this line
+          // Also skip the next line (timeout:)
+          std::string next;
+          std::getline(in, next);
+        } else {
+          out += pending + '\n';
+          pending.clear();
+          if (line.find(abs) == std::string::npos) {
+            out += line + '\n';
+          }
+        }
+      } else {
+        // Trim leading whitespace to detect list entry
+        std::string trimmed = line;
+        size_t start = trimmed.find_first_not_of(" \t");
+        if (start != std::string::npos && trimmed[start] == '-') {
+          pending = line;
+        } else if (line.find(abs) != std::string::npos) {
+          // direct mention (e.g. timeout line after we already dropped the command line)
+          // skip
+        } else {
+          out += line + '\n';
+        }
+      }
+    }
+    if (!pending.empty()) out += pending + '\n';
+    return out;
+  };
+
+  std::string patched = strip_mnemon_entries(existing);
+
+  // Append new hook entries in YAML list form
+  // We need to add under the appropriate event keys
+  struct HookEntry { const char* event; const char* filename; int timeout; bool enabled; };
+  std::vector<HookEntry> entries = {
+    {"on_session_start", "prime.sh", 10, true},
+    {"pre_llm_call",     "remind.sh", 10, sel.remind},
+    {"post_llm_call",    "nudge.sh",  10, sel.nudge},
+    {"on_session_finalize", "compact.sh", 30, sel.compact},
+  };
+
+  // Build a map of event → new entries to add
+  // Insert into existing YAML structure or append a hooks: block
+  bool has_hooks_section = patched.find("hooks:") != std::string::npos;
+  if (!has_hooks_section) {
+    if (!patched.empty() && patched.back() != '\n') patched += '\n';
+    patched += "hooks:\n";
+  }
+
+  // For each entry we need to add, insert under the right key
+  // Simple approach: rebuild the hooks section
+  // Parse existing hook event blocks and append our entries
+  for (const auto& e : entries) {
+    if (!e.enabled) continue;
+    std::string abs_hook = (abs_hooks_dir / e.filename).string();
+    std::string new_entry = std::string("    ") + "- command: " + abs_hook + "\n"
+                          + "      timeout: " + std::to_string(e.timeout) + "\n";
+    // Find "  <event>:" in patched and insert after it, or append a new event key
+    std::string event_key = std::string("    ") + e.event + ":";
+    auto pos = patched.find(event_key);
+    if (pos != std::string::npos) {
+      size_t insert_pos = patched.find('\n', pos);
+      if (insert_pos != std::string::npos) {
+        patched.insert(insert_pos + 1, new_entry);
+      }
+    } else {
+      // Add new event key under hooks:
+      auto hooks_pos = patched.find("hooks:");
+      if (hooks_pos != std::string::npos) {
+        size_t insert_pos = patched.find('\n', hooks_pos);
+        if (insert_pos != std::string::npos) {
+          patched.insert(insert_pos + 1, event_key + "\n" + new_entry);
+        }
+      }
+    }
+  }
+
+  // Write the file
+  std::ofstream f(cfg);
+  if (!f) throw std::runtime_error("write hermes config: " + cfg.string());
+  f << patched;
+  return cfg;
+}
+
+static int hermes_eject(const std::string& config_dir) {
+  int errs = 0;
+  std::cout << "\nRemoving Hermes Agent integration (" << config_dir << ")...\n";
+  std::error_code ec;
+
+  fs::path hooks_dir = fs::path(config_dir) / "agent-hooks" / "mnemon";
+  fs::remove_all(hooks_dir, ec);
+  if (ec) {
+    status_error("Hooks", "remove failed: " + ec.message());
+    ++errs;
+  } else {
+    status_ok("Hooks", hooks_dir.string() + " removed");
+  }
+  remove_if_empty_dir((fs::path(config_dir) / "agent-hooks").string());
+
+  // Remove mnemon entries from config.yaml
+  fs::path cfg = fs::path(config_dir) / "config.yaml";
+  if (fs::exists(cfg, ec)) {
+    std::ifstream f(cfg);
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    std::string content = ss.str();
+    fs::path abs_hooks = fs::absolute(hooks_dir);
+    // Remove lines referencing our hooks
+    std::istringstream in(content);
+    std::string out, line, pending;
+    while (std::getline(in, line)) {
+      if (!pending.empty()) {
+        if (line.find(abs_hooks.string()) != std::string::npos) {
+          pending.clear();
+          std::string next; std::getline(in, next);
+        } else {
+          out += pending + '\n'; pending.clear();
+          out += line + '\n';
+        }
+      } else {
+        std::string t = line; size_t s = t.find_first_not_of(" \t");
+        if (s != std::string::npos && t[s] == '-') { pending = line; }
+        else if (line.find(abs_hooks.string()) == std::string::npos) { out += line + '\n'; }
+      }
+    }
+    if (!pending.empty()) out += pending + '\n';
+    if (out.empty() || out == "hooks:\n") {
+      fs::remove(cfg, ec);
+    } else {
+      std::ofstream wf(cfg);
+      wf << out;
+    }
+    status_ok("Config", cfg.string() + " cleaned");
+  }
+
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  fs::remove_all(skill_dir, ec);
+  if (ec) {
+    status_error("Skill", "remove failed: " + ec.message());
+    ++errs;
+  } else {
+    status_ok("Skill", skill_dir.string() + " removed");
+  }
+  remove_if_empty_dir((fs::path(config_dir) / "skills").string());
+
+  fs::path state_dir = fs::path(config_dir) / "mnemon";
+  fs::remove_all(state_dir, ec);
+  status_ok("State", state_dir.string() + " removed");
+
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
+static bool install_hermes(Environment env, bool setup_yes, const RunOptions& opt) {
+  std::string config_dir = env.config_dir;
+  std::cout << "\nSetting up Hermes Agent (" << config_dir << ")...\n";
+
+  std::cout << "\n[1/4] Skill\n";
+  try {
+    auto p = hermes_write_skill(config_dir);
+    status_ok("Skill", p.string());
+  } catch (const std::exception& e) {
+    status_error("Skill", e.what());
+    return false;
+  }
+
+  std::cout << "\n[2/4] Prompts\n";
+  std::string prompt_path;
+  try {
+    auto p = write_prompt_files();
+    status_ok("Prompts", p.string());
+    prompt_path = p.string();
+  } catch (const std::exception& e) {
+    status_error("Prompts", e.what());
+    return false;
+  }
+
+  std::cout << "\n[3/4] Hooks\n";
+  HookSelection sel = {true, true, false};
+  if (!setup_yes && is_tty_in()) {
+    sel = select_multi("Select hooks to enable", {
+        "Remind  — recall relevant memories before each LLM call (recommended)",
+        "Nudge   — queue remember guidance after each LLM response",
+        "Compact — queue preservation guidance on session finalization",
+    }, sel);
+  }
+  try {
+    auto p = hermes_write_hook(config_dir, "prime.sh", mnemon::embedded::hermes_prime_sh());
+    status_ok("Hook: prime", p.string());
+  } catch (const std::exception& e) {
+    status_error("Hook: prime", e.what());
+    return false;
+  }
+  if (sel.remind) {
+    try {
+      auto p = hermes_write_hook(config_dir, "remind.sh", mnemon::embedded::hermes_remind_sh());
+      status_ok("Hook: remind", p.string());
+    } catch (const std::exception& e) {
+      status_error("Hook: remind", e.what());
+      return false;
+    }
+  }
+  if (sel.nudge) {
+    try {
+      auto p = hermes_write_hook(config_dir, "nudge.sh", mnemon::embedded::hermes_nudge_sh());
+      status_ok("Hook: nudge", p.string());
+    } catch (const std::exception& e) {
+      status_error("Hook: nudge", e.what());
+      return false;
+    }
+  }
+  if (sel.compact) {
+    try {
+      auto p = hermes_write_hook(config_dir, "compact.sh", mnemon::embedded::hermes_compact_sh());
+      status_ok("Hook: compact", p.string());
+    } catch (const std::exception& e) {
+      status_error("Hook: compact", e.what());
+      return false;
+    }
+  }
+
+  std::cout << "\n[4/4] Config\n";
+  try {
+    auto p = hermes_register_hooks(config_dir, sel);
+    status_updated("Config", p.string());
+  } catch (const std::exception& e) {
+    status_error("Config", e.what());
+    return false;
+  }
+
+  std::vector<std::string> hook_names = {"prime"};
+  if (sel.remind) hook_names.push_back("remind");
+  if (sel.nudge)  hook_names.push_back("nudge");
+  if (sel.compact) hook_names.push_back("compact");
+  std::string hooks_str;
+  for (size_t i = 0; i < hook_names.size(); ++i) {
+    if (i > 0) hooks_str += ", ";
+    hooks_str += hook_names[i];
+  }
+
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Hooks   " << config_dir << "/config.yaml (" << hooks_str << ")\n";
+  std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n";
+  std::cout << "\nStart a new Hermes session to activate.\n";
+  std::cout << "Hermes may prompt once to approve the installed shell hooks.\n";
+  std::cout << "Run 'mnemon setup --eject --target hermes' to remove.\n";
   return true;
 }
 
@@ -1487,6 +1812,9 @@ static bool install_env(Environment* env, bool global, bool setup_yes, const Run
   if (env->name == "pi") {
     return install_pi(*env, global, setup_yes);
   }
+  if (env->name == "hermes") {
+    return install_hermes(*env, setup_yes, opt);
+  }
   return false;
 }
 
@@ -1507,6 +1835,11 @@ static int eject_env(Environment* env, bool yes) {
   }
   if (env->name == "pi") {
     int errs = pi_eject(env->config_dir);
+    eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
+    return errs;
+  }
+  if (env->name == "hermes") {
+    int errs = hermes_eject(env->config_dir);
     eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
     return errs;
   }
@@ -1537,7 +1870,7 @@ static void run_install_flow(const RunOptions& opt) {
   }
   if (detected.empty()) {
     std::cout << "\nNo supported LLM CLI environments detected.\n";
-    std::cout << "Install Claude Code, Codex, OpenClaw, Nanobot, or Pi, then run 'mnemon setup' again.\n";
+    std::cout << "Install Claude Code, Codex, OpenClaw, Nanobot, Pi, or Hermes Agent, then run 'mnemon setup' again.\n";
     return;
   }
 
@@ -1634,8 +1967,8 @@ static void run_eject_flow(const RunOptions& opt) {
 } // namespace
 
 void run(const RunOptions& opt) {
-  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi") {
-    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, openclaw, nanobot, or pi)");
+  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
+    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, openclaw, nanobot, pi, or hermes)");
   }
   if (opt.eject) {
     run_eject_flow(opt);

@@ -1126,7 +1126,7 @@ int run_mnemon(int argc, char** argv) {
   bool setup_eject = false;
   bool setup_yes = false;
   bool setup_global = false;
-  setup->add_option("--target", setup_target)->description("claude-code | codex | openclaw | nanobot | pi");
+  setup->add_option("--target", setup_target)->description("claude-code | codex | openclaw | nanobot | pi | hermes");
   setup->add_flag("--eject", setup_eject);
   setup->add_flag("--yes", setup_yes);
   setup->add_flag("--global", setup_global);

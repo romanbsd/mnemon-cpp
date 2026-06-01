@@ -65,7 +65,22 @@ var PiSkill []byte
 //go:embed pi/mnemon.ts
 var PiExtension []byte
 
+//go:embed hermes/SKILL.md
+var HermesSkill []byte
+
+//go:embed hermes/prime.sh
+var HermesPrimeHook []byte
+
+//go:embed hermes/remind.sh
+var HermesRemindHook []byte
+
+//go:embed hermes/nudge.sh
+var HermesNudgeHook []byte
+
+//go:embed hermes/compact.sh
+var HermesCompactHook []byte
+
 // All returns the embedded filesystem for inspection.
 //
-//go:embed claude codex openclaw nanoclaw nanobot pi
+//go:embed claude codex openclaw nanoclaw nanobot pi hermes
 var All embed.FS
