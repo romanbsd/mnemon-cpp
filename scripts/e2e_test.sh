@@ -1143,7 +1143,7 @@ assert_contains "invalid topic rejected" "$OUT" "lower-case dot-separated"
 step "remember — no event emitted without MNEMON_HARNESS_EVENT_EMIT"
 EVENT_DIR2="$TESTDATA/event_seam2"
 mkdir -p "$EVENT_DIR2"
-OUT=$(cd "$EVENT_DIR2" && $M --data-dir "$EVENT_DIR2" remember "test memory" --category fact 2>&1)
+OUT=$(cd "$EVENT_DIR2" && $M --data-dir "$EVENT_DIR2" remember --no-diff "test memory" --cat fact 2>&1)
 if [ -f "$EVENT_DIR2/.mnemon/events.jsonl" ]; then
   fail "no event without flag" "(events.jsonl should not exist)"
 else
@@ -1154,12 +1154,45 @@ step "remember — event emitted with MNEMON_HARNESS_EVENT_EMIT=1"
 EVENT_DIR3="$TESTDATA/event_seam3"
 mkdir -p "$EVENT_DIR3"
 EVENTS_LOG3="$EVENT_DIR3/remember_events.jsonl"
-OUT=$(cd "$EVENT_DIR3" && MNEMON_HARNESS_EVENT_EMIT=1 MNEMON_HARNESS_EVENTLOG="$EVENTS_LOG3" $M --data-dir "$EVENT_DIR3" remember "test memory event" --category fact 2>&1)
+OUT=$(cd "$EVENT_DIR3" && MNEMON_HARNESS_EVENT_EMIT=1 MNEMON_HARNESS_EVENTLOG="$EVENTS_LOG3" $M --data-dir "$EVENT_DIR3" remember --no-diff "test memory event" --cat fact 2>&1)
 if [ -f "$EVENTS_LOG3" ]; then
   assert_contains "remember event type" "$(cat "$EVENTS_LOG3")" '"memory.hot_write_observed"'
 else
   fail "remember event emitted" "(events.jsonl not found: $EVENTS_LOG3)"
 fi
+
+# ══════════════════════════════════════════════════════════════════════
+banner "Setup: Pi integration"
+# ══════════════════════════════════════════════════════════════════════
+
+PI_SETUP_DIR="$TESTDATA/setup_pi"
+mkdir -p "$PI_SETUP_DIR"
+
+step "setup --target pi --yes — accepted (installs skill)"
+OUT=$(cd "$PI_SETUP_DIR" && $M --data-dir "$PI_SETUP_DIR" setup --target pi --yes 2>&1 || true)
+assert_contains "pi target accepted" "$OUT" "Skill"
+
+step "pi skill installed"
+if [ -f "$PI_SETUP_DIR/.pi/skills/mnemon/SKILL.md" ]; then
+  pass "pi SKILL.md exists" "(found)"
+else
+  fail "pi SKILL.md exists" "(not found: $PI_SETUP_DIR/.pi/skills/mnemon/SKILL.md)"
+fi
+
+step "pi extension installed"
+if [ -f "$PI_SETUP_DIR/.pi/extensions/mnemon.ts" ]; then
+  pass "pi mnemon.ts exists" "(found)"
+else
+  fail "pi mnemon.ts exists" "(not found: $PI_SETUP_DIR/.pi/extensions/mnemon.ts)"
+fi
+
+step "setup --target bogus error mentions pi"
+OUT=$($M --data-dir "$PI_SETUP_DIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions pi" "$OUT" "pi"
+
+step "setup --target pi --eject --yes — removes integration"
+OUT=$(cd "$PI_SETUP_DIR" && $M --data-dir "$PI_SETUP_DIR" setup --eject --target pi --yes 2>&1 || true)
+assert_not_contains "pi SKILL.md removed" "$(ls "$PI_SETUP_DIR/.pi/skills/mnemon/" 2>/dev/null || echo 'removed')" "SKILL.md"
 
 # ── Report ────────────────────────────────────────────────────────────
 echo ""

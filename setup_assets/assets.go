@@ -59,7 +59,13 @@ var NanoClawContainerSkill []byte
 //go:embed nanobot/SKILL.md
 var NanobotSkill []byte
 
+//go:embed pi/SKILL.md
+var PiSkill []byte
+
+//go:embed pi/mnemon.ts
+var PiExtension []byte
+
 // All returns the embedded filesystem for inspection.
 //
-//go:embed claude codex openclaw nanoclaw nanobot
+//go:embed claude codex openclaw nanoclaw nanobot pi
 var All embed.FS
