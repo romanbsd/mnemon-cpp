@@ -1162,6 +1162,28 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════════
+banner "Setup: Hermes Agent integration"
+# ══════════════════════════════════════════════════════════════════════
+
+HERMES_SETUP_DIR="$TESTDATA/setup_hermes"
+mkdir -p "$HERMES_SETUP_DIR"
+
+step "setup --target hermes --yes — accepted (installs skill)"
+OUT=$(cd "$HERMES_SETUP_DIR" && $M --data-dir "$HERMES_SETUP_DIR" setup --target hermes --yes 2>&1 || true)
+assert_contains "hermes target accepted" "$OUT" "Skill"
+assert_contains "hermes target shows config" "$OUT" "Setup complete"
+
+step "hermes output shows skill path"
+assert_contains "hermes skill path in output" "$OUT" "skills/mnemon/SKILL.md"
+
+step "hermes output shows hooks path"
+assert_contains "hermes hooks path in output" "$OUT" "config.yaml"
+
+step "setup --target bogus error mentions hermes"
+OUT=$($M --data-dir "$HERMES_SETUP_DIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions hermes" "$OUT" "hermes"
+
+# ══════════════════════════════════════════════════════════════════════
 banner "Setup: Pi integration"
 # ══════════════════════════════════════════════════════════════════════
 
