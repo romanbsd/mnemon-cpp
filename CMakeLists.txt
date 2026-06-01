@@ -34,6 +34,8 @@ set(ASSET_DEPS
   "${ASSET_ROOT}/nanoclaw/SKILL.md"
   "${ASSET_ROOT}/nanoclaw/container-skill.md"
   "${ASSET_ROOT}/nanobot/SKILL.md"
+  "${ASSET_ROOT}/pi/SKILL.md"
+  "${ASSET_ROOT}/pi/mnemon.ts"
   "${ASSET_ROOT}/codex/SKILL.md"
   "${ASSET_ROOT}/codex/prime.sh"
   "${ASSET_ROOT}/codex/stop.sh"

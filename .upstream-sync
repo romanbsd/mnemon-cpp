@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=487b95a981401c0912e9545067467389e535bf07
-last_sha_subject=feat: add default-off harness event seam
-last_sha_date=2026-05-31T19:10:55+08:00
+last_sha=86b67e3ebecde5f2dac7f6fcbc07fd04c262ca6a
+last_sha_subject=feat(setup): add Pi integration
+last_sha_date=2026-05-31T12:51:50Z

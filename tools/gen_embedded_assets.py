@@ -20,6 +20,8 @@ ASSET_FILES = [
     "nanoclaw/SKILL.md",
     "nanoclaw/container-skill.md",
     "nanobot/SKILL.md",
+    "pi/SKILL.md",
+    "pi/mnemon.ts",
     "codex/SKILL.md",
     "codex/prime.sh",
     "codex/stop.sh",
