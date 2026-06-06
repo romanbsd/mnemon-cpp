@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 struct sqlite3;
@@ -104,6 +105,7 @@ public:
   std::vector<Edge> get_edges_by_source_and_type(const std::string& source_id, EdgeType t);
   std::vector<std::string> find_insights_with_entity(const std::string& entity, const std::string& exclude_id,
                                                      int limit);
+  std::unordered_set<std::string> load_known_entities();
   std::vector<Edge> get_all_edges();
 
   void delete_edge(const std::string& source_id, const std::string& target_id, EdgeType edge_type);

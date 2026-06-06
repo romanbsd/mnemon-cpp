@@ -13,7 +13,8 @@ namespace mnemon::graph_eng {
 EdgeStats on_insight_created(Database& db, Insight& insight, EmbedCache* embed_cache,
                              const std::string& entity_mode, bool temporal_disabled) {
   EdgeStats s;
-  insight.entities = resolve_entities(insight.content, insight.entities, entity_mode);
+  auto known = db.load_known_entities();
+  insight.entities = resolve_entities_indexed(insight.content, insight.entities, entity_mode, known);
   if (!temporal_disabled) {
     s.temporal = create_temporal_edges(db, insight);
   }

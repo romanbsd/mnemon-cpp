@@ -625,7 +625,8 @@ int run_mnemon(int argc, char** argv) {
         qvec.clear();
       }
     }
-    auto qents = mnemon::graph_eng::extract_entities(rec_query);
+    auto known_ents = db->load_known_entities();
+    auto qents = mnemon::graph_eng::extract_entities_indexed(rec_query, known_ents);
     auto resp =
         mnemon::search_engine::intent_aware_recall(*db, rec_query, qvec, qents, rec_limit, ov);
     for (const auto& r : resp.results) {
