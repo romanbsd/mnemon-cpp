@@ -152,13 +152,55 @@ bool valid_entity_mode(const std::string& mode) {
 std::vector<std::string> resolve_entities(std::string_view content,
                                           const std::vector<std::string>& provided,
                                           const std::string& mode) {
+  return resolve_entities_indexed(content, provided, mode, {});
+}
+
+std::vector<std::string> extract_entities_indexed(std::string_view text_sv,
+                                                   const std::unordered_set<std::string>& known_entities) {
+  auto entities = extract_entities(text_sv);
+  if (known_entities.empty()) {
+    return entities;
+  }
+  std::unordered_set<std::string> seen(entities.begin(), entities.end());
+
+  static const std::regex re_wide(R"(\b([A-Z][a-zA-Z0-9]+)\b)");
+  std::string text(text_sv);
+
+  // Fourth-path A: wide-cast capitalized tokens admitted only when known.
+  for (auto it = std::sregex_iterator(text.begin(), text.end(), re_wide); it != std::sregex_iterator(); ++it) {
+    const std::string cand = (*it)[1].str();
+    if (cand.empty() || seen.count(cand) || kAcronymStop.count(cand)) {
+      continue;
+    }
+    if (known_entities.count(cand)) {
+      seen.insert(cand);
+      entities.push_back(cand);
+    }
+  }
+  // Fourth-path B: every tokenized word admitted only when known.
+  for (const auto& word : split_words(text)) {
+    if (word.empty() || seen.count(word) || kAcronymStop.count(word)) {
+      continue;
+    }
+    if (known_entities.count(word)) {
+      seen.insert(word);
+      entities.push_back(word);
+    }
+  }
+  return entities;
+}
+
+std::vector<std::string> resolve_entities_indexed(std::string_view content,
+                                                   const std::vector<std::string>& provided,
+                                                   const std::string& mode,
+                                                   const std::unordered_set<std::string>& known_entities) {
   if (mode == "provided") {
     return provided;
   }
   if (mode == "auto") {
-    return extract_entities(content);
+    return extract_entities_indexed(content, known_entities);
   }
-  return merge_entities(provided, extract_entities(content));
+  return merge_entities(provided, extract_entities_indexed(content, known_entities));
 }
 
 } // namespace mnemon::graph_eng

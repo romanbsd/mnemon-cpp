@@ -1216,6 +1216,43 @@ step "setup --target pi --eject --yes — removes integration"
 OUT=$(cd "$PI_SETUP_DIR" && $M --data-dir "$PI_SETUP_DIR" setup --eject --target pi --yes 2>&1 || true)
 assert_not_contains "pi SKILL.md removed" "$(ls "$PI_SETUP_DIR/.pi/skills/mnemon/" 2>/dev/null || echo 'removed')" "SKILL.md"
 
+# ══════════════════════════════════════════════════════════════════════
+banner "Milestone 15: Index-Aware Entity Extraction (Fourth Path)"
+# ══════════════════════════════════════════════════════════════════════
+
+TESTDIR15="$TESTDATA/m15"
+mkdir -p "$TESTDIR15"
+
+step "index-aware: seed single-segment CamelCase via --entities"
+# "Athena" is single-segment CamelCase — the default regex+dict paths skip it.
+# Providing it explicitly seeds it into the entity index.
+OUT=$($M --data-dir "$TESTDIR15" remember --no-diff "Athena is our internal project codename" --cat fact --imp 3 --entities "Athena")
+echo -e "    ${DIM}entities (seeded): $(echo "$OUT" | jq -c '.entities')${RESET}"
+assert_contains "seed insight contains Athena" "$OUT" '"Athena"'
+
+step "index-aware: fourth path admits known entity on subsequent insight"
+# "Athena" is now in the entity index. The indexed extractor should admit it
+# via the fourth path (wide-cast capitalized token filter against known set).
+OUT=$($M --data-dir "$TESTDIR15" remember --no-diff "Working on Athena today with some updates" --cat fact --imp 3)
+echo -e "    ${DIM}entities (fourth-path): $(echo "$OUT" | jq -c '.entities')${RESET}"
+assert_contains "fourth-path admits Athena" "$OUT" '"Athena"'
+
+step "index-aware: unknown single-segment CamelCase not admitted"
+# "Banana" is not in the entity index — the fourth path must NOT admit it.
+OUT=$($M --data-dir "$TESTDIR15" remember --no-diff "Banana is a tasty fruit and Athena is great" --cat fact --imp 3)
+echo -e "    ${DIM}entities (filter): $(echo "$OUT" | jq -c '.entities')${RESET}"
+assert_not_contains "Banana not admitted (not in index)" "$OUT" '"Banana"'
+assert_contains "Athena still admitted" "$OUT" '"Athena"'
+
+step "index-aware: lowercase known vocab admitted via fourth path B"
+# Seed a lowercase project name via provided entities.
+OUT=$($M --data-dir "$TESTDIR15" remember --no-diff "openclaw is the harness layer" --cat fact --imp 3 --entities "openclaw")
+assert_contains "seed openclaw in index" "$OUT" '"openclaw"'
+# Now a subsequent insight containing 'openclaw' should pick it up via tokenized scan.
+OUT=$($M --data-dir "$TESTDIR15" remember --no-diff "see openclaw docs for integration" --cat fact --imp 3)
+echo -e "    ${DIM}entities (lowercase fourth-path): $(echo "$OUT" | jq -c '.entities')${RESET}"
+assert_contains "lowercase openclaw admitted" "$OUT" '"openclaw"'
+
 # ── Report ────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"

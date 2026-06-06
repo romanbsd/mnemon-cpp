@@ -1024,6 +1024,20 @@ std::vector<std::string> Database::find_insights_with_entity(const std::string& 
   return out;
 }
 
+std::unordered_set<std::string> Database::load_known_entities() {
+  std::unordered_set<std::string> known;
+  Statement st(db_,
+               "SELECT DISTINCT je.value FROM insights i, json_each(i.entities) je "
+               "WHERE i.deleted_at IS NULL");
+  while (st.step()) {
+    std::string v = st.column_text(0);
+    if (!v.empty()) {
+      known.insert(std::move(v));
+    }
+  }
+  return known;
+}
+
 std::vector<Edge> Database::get_all_edges() {
   Statement st(db_, "SELECT source_id, target_id, edge_type, weight, metadata, created_at FROM edges");
   std::vector<Edge> out;
