@@ -139,22 +139,21 @@ TEST_CASE("tokenize preserves non-BMP UTF-8 tokens") {
 // placeholder to keep the binary alive before any other tests are added
 TEST_CASE("placeholder") { REQUIRE(true); }
 
-TEST_CASE("float runtime vectors serialize as compatible float64 blobs") {
+TEST_CASE("float runtime vectors serialize as float32 blobs") {
   std::vector<float> runtime{3.0f, 4.0f};
   mnemon::normalize_vector(runtime);
 
   const auto blob = mnemon::serialize_vector(runtime);
-  REQUIRE(blob.size() == runtime.size() * sizeof(double));
-
-  const auto compat = mnemon::deserialize_vector_double(blob);
-  REQUIRE(compat.size() == runtime.size());
-  REQUIRE(compat[0] == Catch::Approx(0.6));
-  REQUIRE(compat[1] == Catch::Approx(0.8));
+  REQUIRE(blob.size() == runtime.size() * sizeof(uint32_t));
 
   const auto restored = mnemon::deserialize_vector(blob);
   REQUIRE(restored.size() == runtime.size());
   REQUIRE(restored[0] == Catch::Approx(runtime[0]));
   REQUIRE(restored[1] == Catch::Approx(runtime[1]));
+}
+
+TEST_CASE("deserialize_vector rejects blobs whose length isn't a multiple of 4") {
+  REQUIRE(mnemon::deserialize_vector(std::vector<uint8_t>(7, 0)).empty());
 }
 
 TEST_CASE("cosine_similarity_many matches single cosine behavior") {

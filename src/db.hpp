@@ -120,6 +120,7 @@ private:
 
   void migrate();
   void migrate_remove_narrative_edges();
+  void migrate_embeddings_to_float32();
   void exec_sql(const char* sql);
   Insight scan_insight_row(Statement& st);
   Edge scan_edge_row(Statement& st);
