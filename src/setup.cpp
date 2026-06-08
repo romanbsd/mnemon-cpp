@@ -630,8 +630,58 @@ static fs::path claude_write_hook(const std::string& config_dir, const std::stri
   return hook_path;
 }
 
+// Directory Claude Code treats as user-global configuration: $CLAUDE_CONFIG_DIR
+// when set, otherwise ~/.claude.
+static std::string user_claude_config_dir() {
+  if (const char* dir = std::getenv("CLAUDE_CONFIG_DIR"); dir && *dir) {
+    return dir;
+  }
+  std::string home = home_dir();
+  if (home.empty()) {
+    return "";
+  }
+  return (fs::path(home) / ".claude").string();
+}
+
+// Symlink-resolved absolute form of p, falling back to the lexical absolute
+// path when p does not (yet) exist — mirrors Go's filepath.EvalSymlinks fallback.
+static fs::path canonical_path(const fs::path& p) {
+  std::error_code ec;
+  fs::path abs = fs::absolute(p, ec);
+  if (ec) {
+    return p;
+  }
+  fs::path resolved = fs::canonical(abs, ec);
+  return ec ? abs : resolved;
+}
+
+// Reports whether a project-local config dir is in fact Claude Code's
+// user-global config dir — the degenerate case of running a project-local
+// setup with cwd == $HOME, where "./.claude" IS "~/.claude". Relative hook
+// commands written into that file load for every session on the machine but
+// only resolve when the session's working directory is $HOME; the user-global
+// file's contract is absolute paths. Both sides are resolved through symlinks
+// before comparison.
+static bool collides_with_user_config(const std::string& config_dir) {
+  std::string user_dir = user_claude_config_dir();
+  if (user_dir.empty()) {
+    return false;
+  }
+  return canonical_path(config_dir) == canonical_path(user_dir);
+}
+
 static fs::path claude_register_hooks(const std::string& config_dir, const HookSelection& sel) {
   fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  // When the project-local config dir collides with the user-global one (setup
+  // run from $HOME), hook commands are written as absolute paths so they honor
+  // the global file's contract and resolve from any session directory.
+  if (collides_with_user_config(config_dir)) {
+    hooks_dir = fs::absolute(hooks_dir);
+    std::cout << "  Note: this project config dir is Claude Code's user-global config (" << user_claude_config_dir()
+              << ");\n"
+              << "        writing absolute hook paths so hooks resolve from any directory.\n"
+              << "        Use --global to make a user-wide install explicit.\n";
+  }
   fs::path settings_path = fs::path(config_dir) / "settings.json";
   nlohmann::json data = read_json_file(settings_path);
   add_claude_hooks_selective(data, hooks_dir.string(), sel);

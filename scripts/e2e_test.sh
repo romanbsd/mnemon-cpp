@@ -1003,6 +1003,46 @@ if [ "$CONSEC_BLANKS" = "0" ]; then pass "no triple newlines" "(absent: consecut
 assert_contains "preserved header" "$EJECT_MD2" "Header"
 assert_contains "preserved content" "$EJECT_MD2" "Content after"
 
+# ══════════════════════════════════════════════════════════════════════
+banner "Setup: Claude Code user-global config collision guard"
+# ══════════════════════════════════════════════════════════════════════
+# A project-local install run with cwd == $HOME makes "./.claude" the same
+# directory as "~/.claude" (Claude Code's user-global config). Relative hook
+# commands written there only resolve when the session cwd is $HOME, so the
+# install must detect the collision and write absolute commands instead.
+
+step "setup --target claude-code with cwd == \$HOME — writes absolute hook commands"
+CLAUDE_HOME="$TESTDATA/claude_home_collision"
+rm -rf "$CLAUDE_HOME" && mkdir -p "$CLAUDE_HOME"
+(cd "$CLAUDE_HOME" && HOME="$CLAUDE_HOME" CLAUDE_CONFIG_DIR= $M --data-dir "$CLAUDE_HOME/.mnemon-data" setup --target claude-code --yes > /dev/null 2>&1 || true)
+PRIME_CMD=$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$CLAUDE_HOME/.claude/settings.json" 2>/dev/null || echo "")
+case "$PRIME_CMD" in
+  /*) pass "collision: SessionStart command is absolute" "($PRIME_CMD)" ;;
+  *)  fail "collision: SessionStart command is absolute" "(expected absolute path, got: $PRIME_CMD)" ;;
+esac
+
+step "setup --target claude-code in a genuine project dir — keeps relative hook commands"
+CLAUDE_PROJ="$TESTDATA/claude_proj_local"
+CLAUDE_PROJ_HOME="$TESTDATA/claude_home_unrelated"
+rm -rf "$CLAUDE_PROJ" "$CLAUDE_PROJ_HOME" && mkdir -p "$CLAUDE_PROJ" "$CLAUDE_PROJ_HOME"
+(cd "$CLAUDE_PROJ" && HOME="$CLAUDE_PROJ_HOME" CLAUDE_CONFIG_DIR= $M --data-dir "$CLAUDE_PROJ/.mnemon-data" setup --target claude-code --yes > /dev/null 2>&1 || true)
+PRIME_CMD2=$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$CLAUDE_PROJ/.claude/settings.json" 2>/dev/null || echo "")
+case "$PRIME_CMD2" in
+  /*) fail "project-local: SessionStart command stays relative" "(expected relative path, got absolute: $PRIME_CMD2)" ;;
+  *)  pass "project-local: SessionStart command stays relative" "($PRIME_CMD2)" ;;
+esac
+
+step "setup --target claude-code — symlinked \$HOME vs physical cwd still collides"
+SYMBASE="$TESTDATA/claude_symlink_base"
+rm -rf "$SYMBASE" && mkdir -p "$SYMBASE/realhome/.claude"
+ln -s "$SYMBASE/realhome" "$SYMBASE/linkhome"
+(cd "$SYMBASE/realhome" && HOME="$SYMBASE/linkhome" CLAUDE_CONFIG_DIR= $M --data-dir "$SYMBASE/realhome/.mnemon-data" setup --target claude-code --yes > /dev/null 2>&1 || true)
+PRIME_CMD3=$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$SYMBASE/realhome/.claude/settings.json" 2>/dev/null || echo "")
+case "$PRIME_CMD3" in
+  /*) pass "symlinked \$HOME: SessionStart command is absolute" "($PRIME_CMD3)" ;;
+  *)  fail "symlinked \$HOME: SessionStart command is absolute" "(expected absolute path, got: $PRIME_CMD3)" ;;
+esac
+
 banner "Milestone 12: --embed-model Flag"
 EMBEDMODEL_DIR="$TESTDATA/embed_model"
 mkdir -p "$EMBEDMODEL_DIR"
