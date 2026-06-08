@@ -13,8 +13,6 @@ std::vector<float> cosine_similarity_many(std::span<const float> query,
 std::vector<uint8_t> serialize_vector(std::span<const float> v);
 std::vector<float> deserialize_vector(const std::vector<uint8_t>& blob);
 std::vector<float> deserialize_vector(const void* data, size_t bytes);
-std::vector<double> deserialize_vector_double(const std::vector<uint8_t>& blob);
-std::vector<double> deserialize_vector_double(const void* data, size_t bytes);
 void normalize_vector(std::vector<float>& v);
 
 } // namespace mnemon

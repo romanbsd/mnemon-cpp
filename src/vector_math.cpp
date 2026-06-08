@@ -77,50 +77,21 @@ std::vector<float> cosine_similarity_many(std::span<const float> query,
 #endif
 }
 
+// Embeddings are persisted as raw little-endian float32 blobs (4 bytes/dim).
+// The runtime representation is already `float`, so storage is a direct
+// bit-reinterpretation — no float64 round trip needed.
 std::vector<uint8_t> serialize_vector(std::span<const float> v) {
   if (v.empty()) return {};
 
-  std::vector<uint8_t> out(v.size() * sizeof(double));
-  const size_t n = v.size();
-
-  for (size_t i = 0; i < n; ++i) {
-    double d = static_cast<double>(v[i]);
+  std::vector<uint8_t> out(v.size() * sizeof(uint32_t));
+  for (size_t i = 0; i < v.size(); ++i) {
+    uint32_t bits = std::bit_cast<uint32_t>(v[i]);
     if constexpr (std::endian::native == std::endian::big) {
-      uint64_t bits;
-      std::memcpy(&bits, &d, sizeof(double));
       bits = std::byteswap(bits);
-      std::memcpy(&d, &bits, sizeof(double));
     }
-    std::memcpy(out.data() + i * sizeof(double), &d, sizeof(double));
+    std::memcpy(out.data() + i * sizeof(uint32_t), &bits, sizeof(uint32_t));
   }
   return out;
-}
-
-std::vector<double> deserialize_vector_double(const std::vector<uint8_t>& blob) {
-  return deserialize_vector_double(blob.data(), blob.size());
-}
-
-std::vector<double> deserialize_vector_double(const void* data, size_t bytes) {
-  if (!data || bytes == 0 || bytes % sizeof(double) != 0) {
-    return {};
-  }
-
-  const size_t n = bytes / sizeof(double);
-  std::vector<double> v(n);
-  const char* cptr = static_cast<const char*>(data);
-
-  for (size_t i = 0; i < n; ++i) {
-    double d;
-    std::memcpy(&d, cptr + i * sizeof(double), sizeof(double));
-    if constexpr (std::endian::native == std::endian::big) {
-      uint64_t bits;
-      std::memcpy(&bits, &d, sizeof(double));
-      bits = std::byteswap(bits);
-      std::memcpy(&d, &bits, sizeof(double));
-    }
-    v[i] = d;
-  }
-  return v;
 }
 
 std::vector<float> deserialize_vector(const std::vector<uint8_t>& blob) {
@@ -128,24 +99,21 @@ std::vector<float> deserialize_vector(const std::vector<uint8_t>& blob) {
 }
 
 std::vector<float> deserialize_vector(const void* data, size_t bytes) {
-  if (!data || bytes == 0 || bytes % sizeof(double) != 0) {
+  if (!data || bytes == 0 || bytes % sizeof(uint32_t) != 0) {
     return {};
   }
 
-  const size_t n = bytes / sizeof(double);
+  const size_t n = bytes / sizeof(uint32_t);
   std::vector<float> v(n);
   const char* cptr = static_cast<const char*>(data);
 
   for (size_t i = 0; i < n; ++i) {
-    double d;
-    std::memcpy(&d, cptr + i * sizeof(double), sizeof(double));
+    uint32_t bits;
+    std::memcpy(&bits, cptr + i * sizeof(uint32_t), sizeof(uint32_t));
     if constexpr (std::endian::native == std::endian::big) {
-      uint64_t bits;
-      std::memcpy(&bits, &d, sizeof(double));
       bits = std::byteswap(bits);
-      std::memcpy(&d, &bits, sizeof(double));
     }
-    v[i] = static_cast<float>(d);
+    v[i] = std::bit_cast<float>(bits);
   }
   return v;
 }

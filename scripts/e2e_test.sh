@@ -1043,6 +1043,50 @@ case "$PRIME_CMD3" in
   *)  fail "symlinked \$HOME: SessionStart command is absolute" "(expected absolute path, got: $PRIME_CMD3)" ;;
 esac
 
+# ══════════════════════════════════════════════════════════════════════
+banner "Embeddings: one-time float64 → float32 storage migration"
+# ══════════════════════════════════════════════════════════════════════
+# Legacy databases persisted embeddings as raw little-endian float64 blobs
+# (8 bytes/dim). Current databases use float32 (4 bytes/dim — half the size,
+# ample precision for cosine ranking). PRAGMA user_version gates a one-time,
+# in-place rewrite of every legacy blob on first open of an old database;
+# malformed or already-migrated blobs are left untouched rather than risk
+# corrupting them.
+
+step "legacy float64 embeddings rewritten to float32 on open; malformed blobs untouched"
+EMBMIG_DIR="$TESTDATA/embed_float32_migrate"
+rm -rf "$EMBMIG_DIR"
+GOOD_ID=$(extract_id "$($M --data-dir "$EMBMIG_DIR" remember "legacy embedding fixture good" --cat fact)")
+BAD_ID=$(extract_id "$($M --data-dir "$EMBMIG_DIR" remember "legacy embedding fixture malformed" --cat fact)")
+EMBMIG_DB="$EMBMIG_DIR/data/default/mnemon.db"
+# [1.5, -2.25] as little-endian float64 — upstream's own migration test fixture;
+# 5 raw bytes is not a multiple of 8 and must survive the migration unchanged.
+sqlite3 "$EMBMIG_DB" "UPDATE insights SET embedding = X'000000000000F83F00000000000002C0' WHERE id = '$GOOD_ID';
+                      UPDATE insights SET embedding = X'0102030405' WHERE id = '$BAD_ID';
+                      PRAGMA user_version = 0;"
+
+$M --data-dir "$EMBMIG_DIR" status > /dev/null 2>&1 || true
+
+GOOD_LEN=$(sqlite3 "$EMBMIG_DB" "SELECT length(embedding) FROM insights WHERE id = '$GOOD_ID'")
+GOOD_HEX=$(sqlite3 "$EMBMIG_DB" "SELECT hex(embedding) FROM insights WHERE id = '$GOOD_ID'")
+BAD_HEX=$(sqlite3 "$EMBMIG_DB" "SELECT hex(embedding) FROM insights WHERE id = '$BAD_ID'")
+EMBMIG_USER_VERSION=$(sqlite3 "$EMBMIG_DB" "PRAGMA user_version")
+
+case "$GOOD_LEN-$GOOD_HEX" in
+  8-0000C03F000010C0) pass "legacy [1.5, -2.25] rewritten as 8-byte float32 LE blob" "($GOOD_HEX)" ;;
+  *)                  fail "legacy [1.5, -2.25] rewritten as 8-byte float32 LE blob" "(len=$GOOD_LEN hex=$GOOD_HEX)" ;;
+esac
+
+case "$BAD_HEX" in
+  0102030405) pass "malformed 5-byte blob left untouched by migration" "($BAD_HEX)" ;;
+  *)          fail "malformed 5-byte blob left untouched by migration" "(got $BAD_HEX)" ;;
+esac
+
+case "$EMBMIG_USER_VERSION" in
+  1) pass "user_version advanced to 1 despite malformed blob" "($EMBMIG_USER_VERSION)" ;;
+  *) fail "user_version advanced to 1 despite malformed blob" "(got $EMBMIG_USER_VERSION)" ;;
+esac
+
 banner "Milestone 12: --embed-model Flag"
 EMBEDMODEL_DIR="$TESTDATA/embed_model"
 mkdir -p "$EMBEDMODEL_DIR"

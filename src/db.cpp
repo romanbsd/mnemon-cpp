@@ -10,6 +10,7 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -29,6 +30,39 @@ namespace mnemon {
 
 static constexpr int kTransactionBeginAttempts = 5;
 static constexpr int kOplogTrimInterval = 100;
+static constexpr int kEmbeddingFloat32UserVersion = 1;
+
+// Attempts to decode `bytes` as a legacy little-endian float64 embedding blob,
+// returning std::nullopt if the length isn't a multiple of 8 or any decoded
+// value is implausible for an embedding (NaN, Inf, or magnitude over 1e6).
+// The plausibility check matters because reinterpreting an already-migrated
+// float32 blob's bits as float64 yields such values with overwhelming
+// probability — a vector that "looks normal" is almost certainly genuine
+// legacy data, and one that doesn't must be left untouched rather than
+// silently re-encoded as garbage. Values are validated as float64 before the
+// narrowing cast to float so an out-of-range magnitude (e.g. MaxFloat64)
+// can't produce an undefined float32 conversion.
+static std::optional<std::vector<float>> try_decode_legacy_embedding(const void* data, size_t bytes) {
+  if (!data || bytes == 0 || bytes % sizeof(uint64_t) != 0) {
+    return std::nullopt;
+  }
+  const size_t n = bytes / sizeof(uint64_t);
+  std::vector<float> v(n);
+  const char* cptr = static_cast<const char*>(data);
+  for (size_t i = 0; i < n; ++i) {
+    uint64_t bits;
+    std::memcpy(&bits, cptr + i * sizeof(uint64_t), sizeof(uint64_t));
+    if constexpr (std::endian::native == std::endian::big) {
+      bits = std::byteswap(bits);
+    }
+    double d = std::bit_cast<double>(bits);
+    if (!std::isfinite(d) || std::fabs(d) > 1e6) {
+      return std::nullopt;
+    }
+    v[i] = static_cast<float>(d);
+  }
+  return v;
+}
 
 // Read-only mounts (e.g. chmod -R a-w): WAL mode would open/create -wal/-shm next to the DB; that requires
 // write access. Open via URI with immutable=1 so SQLite uses only the main db file (parity with Go OpenReadOnly
@@ -288,6 +322,52 @@ void Database::migrate_remove_narrative_edges() {
   });
 }
 
+// One-time rewrite of legacy little-endian float64 embedding blobs (8 bytes/dim)
+// to float32 (4 bytes/dim — half the storage, ample precision for cosine
+// ranking). Gated by PRAGMA user_version so it runs exactly once per database;
+// new and already-migrated databases write float32 directly via serialize_vector.
+void Database::migrate_embeddings_to_float32() {
+  Statement uv(db_, "PRAGMA user_version");
+  uv.step();
+  if (uv.column_int(0) >= kEmbeddingFloat32UserVersion) {
+    return;
+  }
+
+  in_transaction([&] {
+    struct MigratedEmbedding {
+      std::string id;
+      std::vector<uint8_t> blob;
+    };
+    std::vector<MigratedEmbedding> migrated;
+    {
+      Statement st(db_, "SELECT id, embedding FROM insights WHERE embedding IS NOT NULL");
+      while (st.step()) {
+        std::string id = st.column_text(0);
+        const void* p = st.column_blob(1);
+        int n = st.column_bytes(1);
+        auto vec = try_decode_legacy_embedding(p, static_cast<size_t>(n));
+        if (!vec) {
+          // Not a parseable legacy float64 blob (empty, malformed, or already
+          // float32) — leave it untouched. Aborting the whole migration over
+          // one bad row would permanently block the database from opening,
+          // and re-encoding non-legacy data here would silently corrupt it.
+          std::cerr << "mnemon: skipping float32 migration for insight " << id
+                    << ": embedding is not a legacy float64 vector (" << n << " bytes)\n";
+          continue;
+        }
+        migrated.push_back({std::move(id), serialize_vector(*vec)});
+      }
+    }
+    for (const auto& m : migrated) {
+      Statement up(db_, "UPDATE insights SET embedding = ? WHERE id = ?");
+      up.bind_blob(1, m.blob.data(), m.blob.size());
+      up.bind_text(2, m.id);
+      up.step();
+    }
+    exec_sql(("PRAGMA user_version = " + std::to_string(kEmbeddingFloat32UserVersion)).c_str());
+  });
+}
+
 // Idempotent DDL: base tables + incremental ALTERs; narrative edge/category cleanup matches Go migrations.
 void Database::migrate() {
   const char* schema = R"SQL(
@@ -342,6 +422,8 @@ CREATE INDEX IF NOT EXISTS idx_oplog_created ON oplog(created_at);
   add_column_ignore_dup(db_, "ALTER TABLE insights ADD COLUMN last_accessed_at      TEXT");
   add_column_ignore_dup(db_, "ALTER TABLE insights ADD COLUMN embedding             BLOB");
   add_column_ignore_dup(db_, "ALTER TABLE insights ADD COLUMN effective_importance  REAL DEFAULT 0.5");
+
+  migrate_embeddings_to_float32();
 
   exec_sql("CREATE INDEX IF NOT EXISTS idx_insights_effective_imp ON insights(effective_importance)");
   exec_sql("CREATE INDEX IF NOT EXISTS idx_prune_candidates ON insights(deleted_at, importance, access_count, effective_importance)");

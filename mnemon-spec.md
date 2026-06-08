@@ -265,7 +265,7 @@ foreign_keys = ON
 | UpdatedAt | RFC 3339 UTC | `updated_at` | `TEXT` |
 | DeletedAt | RFC 3339 UTC, nullable | `deleted_at` (omitted if null) | `TEXT NULL` |
 | LastAccessedAt | RFC 3339 UTC, nullable; falls back to `CreatedAt` when null | not in standard JSON | `TEXT NULL` |
-| Embedding | float64 vector, nullable | not in standard JSON | `BLOB` (see §5.4) |
+| Embedding | float32 vector, nullable | not in standard JSON | `BLOB` (see §5.4) |
 | EffectiveImportance | float, default 0.5 | not in standard `Insight` JSON; surfaced in `gc` and `remember` | `REAL` |
 
 **`tags` and `entities`** are stored as JSON arrays of strings. On insert, an empty list is stored as the literal `"[]"` (never NULL). On read, a NULL or unparseable value yields an empty list.
@@ -303,14 +303,16 @@ Validation: any other value passed to `--cat` produces error `invalid category "
 ### 5.4 Embedding Blob Format
 
 ```
-Encoding: little-endian sequence of IEEE 754 binary64 values
-Length:   N * 8 bytes for an N-dimensional vector
+Encoding: little-endian sequence of IEEE 754 binary32 values
+Length:   N * 4 bytes for an N-dimensional vector
 NULL:     no embedding present
 ```
 
-Serialize: for each `f64` in the vector, write 8 little-endian bytes. Deserialize: if `len(blob) % 8 != 0` or `len(blob) == 0`, treat as missing (return null). Otherwise slice into `f64`s.
+Serialize: for each `f32` in the vector, write 4 little-endian bytes. Deserialize: if `len(blob) % 4 != 0` or `len(blob) == 0`, treat as missing (return null). Otherwise slice into `f32`s. There is intentionally no per-blob header — the database migration marker (below) makes decoding unambiguous.
 
 Vector dimensionality is determined by the embedding model (default 768 for `nomic-embed-text`). The schema does not validate dimensions — vectors of mismatched length are simply incompatible for cosine similarity (which returns 0 in that case, §7.3).
+
+**Migration from float64.** Older databases persisted embeddings as raw little-endian binary64 blobs (`N * 8` bytes). On every writable open, `migrate()` checks `PRAGMA user_version`: databases below `1` have each non-null `embedding` blob decoded as legacy binary64, validated for plausibility (finite, magnitude ≤ `1e6` — guards against misreading an already-migrated binary32 blob as binary64, which yields NaN/Inf/extreme values with overwhelming probability), re-encoded as binary32, and written back inside one transaction; `user_version` is then set to `1`. A blob that fails to parse as a plausible legacy vector (wrong length, or implausible decoded values) is left untouched and logged to stderr — aborting the whole migration over one bad row would permanently block the database from opening. New databases and already-migrated databases (`user_version >= 1`) write binary32 directly.
 
 ### 5.5 UUID Format
 
