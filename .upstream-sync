@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=9edfc4a7658c6fd9fb01d4a4a68d9c0b79e430d7
-last_sha_subject=Switch to float32 for storage (#55)
-last_sha_date=2026-06-08T21:12:46+08:00
+last_sha=52fdd881ccf0dd581e46fa307ea0eb2b2f123a1e
+last_sha_subject=docs: prepare v0.1.14 release notes
+last_sha_date=2026-06-08T13:17:15Z

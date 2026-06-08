@@ -1,2 +1,3 @@
 # Pending upstream-tag mirrors. Cleared by scripts/upstream_release_tags.sh.
 # Format: <upstream-tag>=<upstream-sha>
+v0.1.14=52fdd881ccf0dd581e46fa307ea0eb2b2f123a1e
