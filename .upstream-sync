@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=545f625386b963f3ea88cf5ff20d5317143c1fd5
-last_sha_subject=feat(graph): add index-aware fourth path to entity extraction
-last_sha_date=2026-06-03T22:57:25+08:00
+last_sha=1982cff1768de33cd514ca36bf2591fea908aa24
+last_sha_subject=fix(setup): guard against project-local install colliding with the user-global Claude config (#53)
+last_sha_date=2026-06-08T20:57:49+08:00
