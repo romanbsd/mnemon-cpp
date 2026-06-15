@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=52fdd881ccf0dd581e46fa307ea0eb2b2f123a1e
-last_sha_subject=docs: prepare v0.1.14 release notes
-last_sha_date=2026-06-08T13:17:15Z
+last_sha=bdea56de5dd27f5f632cf178b91b32a1fc437c59
+last_sha_subject=Merge pull request #57 from mnemon-dev/feat/ai-native-lifecycle-architecture
+last_sha_date=2026-06-15T02:33:47+08:00
