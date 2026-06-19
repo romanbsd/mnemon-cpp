@@ -4,6 +4,7 @@
 #include "db.hpp"
 #include "embedded_assets.hpp"
 #include "paths.hpp"
+#include "yaml_lite.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -1082,119 +1083,136 @@ static fs::path hermes_write_hook(const std::string& config_dir, const std::stri
   return p;
 }
 
-// Minimal YAML patcher: remove mnemon-owned entries then append new ones.
-// We write a simple YAML snippet; for files that don't exist we create from scratch.
+// config.yaml is a real YAML document: read -> mutate -> re-marshal, mirroring the Go
+// reference (internal/setup/hermes.go), not line-based string surgery.
+
+// Read config.yaml into a YAML map. Missing or blank files yield an empty map, matching the
+// Go reference's readYAMLFile.
+static yaml::Value yaml_read_file(const fs::path& path) {
+  std::error_code ec;
+  if (!fs::exists(path, ec)) {
+    return yaml::Value::make_map();
+  }
+  std::ifstream in(path);
+  if (!in) {
+    throw std::runtime_error("read " + path.string());
+  }
+  std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  if (raw.find_first_not_of(" \t\r\n") == std::string::npos) {
+    return yaml::Value::make_map();
+  }
+  yaml::Value v = yaml::parse(raw);
+  if (!v.is_map()) {
+    return yaml::Value::make_map();
+  }
+  return v;
+}
+
+// Marshal + atomic write (temp file then rename), preserving the existing file mode and
+// defaulting to 0600 — mirrors the Go reference's writeYAMLFile.
+static void yaml_write_file(const fs::path& path, const yaml::Value& data) {
+  std::string body = yaml::marshal(data);
+  fs::create_directories(path.parent_path());
+  mode_t mode = 0600;
+  struct stat st {};
+  if (::stat(path.string().c_str(), &st) == 0) {
+    mode = st.st_mode & 0777;
+  }
+  fs::path tmp = path;
+  tmp += ".tmp";
+  {
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    if (!out) {
+      throw std::runtime_error("write tmp " + tmp.string());
+    }
+    out << body;
+  }
+  fs::rename(tmp, path);
+  chmod_path(path, mode);
+}
+
+// Write the document, or remove the file when the resulting map is empty — mirrors the Go
+// reference's writeOrRemoveYAMLFile.
+static void yaml_write_or_remove(const fs::path& path, const yaml::Value& data) {
+  if (!data.is_map() || data.map.empty()) {
+    std::error_code ec;
+    fs::remove(path, ec);
+    return;
+  }
+  yaml_write_file(path, data);
+}
+
+// Drop every mnemon-owned hook entry (matched by the "mnemon" substring anywhere in the
+// entry, like the Go reference's containsMnemon), pruning emptied events and the hooks block.
+static void remove_hermes_hooks(yaml::Value& data) {
+  auto it = data.map.find("hooks");
+  if (it == data.map.end() || !it->second.is_map()) {
+    return;
+  }
+  yaml::Value& hooks = it->second;
+  static const char* events[] = {"on_session_start", "pre_llm_call", "post_llm_call", "on_session_finalize"};
+  for (const char* ev : events) {
+    auto eit = hooks.map.find(ev);
+    if (eit == hooks.map.end() || !eit->second.is_seq()) {
+      continue;
+    }
+    yaml::Value kept = yaml::Value::make_seq();
+    for (auto& entry : eit->second.seq) {
+      if (!yaml::contains_mnemon(entry)) {
+        kept.seq.push_back(entry);
+      }
+    }
+    if (kept.seq.empty()) {
+      hooks.map.erase(eit);
+    } else {
+      eit->second = std::move(kept);
+    }
+  }
+  if (hooks.map.empty()) {
+    data.map.erase("hooks");
+  }
+}
+
+// Remove any prior mnemon hooks, then append the selected ones — mirrors addHermesHooks.
+static void add_hermes_hooks(yaml::Value& data, const fs::path& hooks_dir, const HookSelection& sel) {
+  remove_hermes_hooks(data);
+  auto hit = data.map.find("hooks");
+  if (hit == data.map.end() || !hit->second.is_map()) {
+    data.map["hooks"] = yaml::Value::make_map();
+  }
+  yaml::Value& hooks = data.map["hooks"];
+
+  auto append = [&](const char* event, const char* file, long long timeout) {
+    yaml::Value entry = yaml::Value::make_map();
+    entry.map["command"] = yaml::Value::make_string((hooks_dir / file).string());
+    entry.map["timeout"] = yaml::Value::make_int(timeout);
+    yaml::Value& arr = hooks.map[event];
+    if (!arr.is_seq()) {
+      arr = yaml::Value::make_seq();
+    }
+    arr.seq.push_back(std::move(entry));
+  };
+
+  append("on_session_start", "prime.sh", 10);
+  if (sel.remind) {
+    append("pre_llm_call", "remind.sh", 10);
+  }
+  if (sel.nudge) {
+    append("post_llm_call", "nudge.sh", 10);
+  }
+  if (sel.compact) {
+    append("on_session_finalize", "compact.sh", 30);
+  }
+}
+
 static fs::path hermes_register_hooks(const std::string& config_dir, const HookSelection& sel) {
   fs::path hooks_dir = fs::path(config_dir) / "agent-hooks" / "mnemon";
   fs::path abs_hooks_dir = fs::absolute(hooks_dir);
-
   fs::path cfg = fs::path(config_dir) / "config.yaml";
-  fs::create_directories(cfg.parent_path());
 
-  // Read existing config
-  std::string existing;
-  {
-    std::ifstream f(cfg);
-    if (f) {
-      std::ostringstream ss;
-      ss << f.rdbuf();
-      existing = ss.str();
-    }
-  }
-
-  // Strip existing mnemon hook lines (any block containing our hooks_dir path)
-  // Strategy: remove lines (and their parent list-entry lines) that reference our hooks_dir
-  auto strip_mnemon_entries = [&](const std::string& yaml) -> std::string {
-    std::string abs = abs_hooks_dir.string();
-    std::istringstream in(yaml);
-    std::string out, line;
-    std::string pending;
-    while (std::getline(in, line)) {
-      // If line is a list-entry marker ("    - "), hold it as pending
-      // If next line contains our hooks path, drop both
-      if (!pending.empty()) {
-        if (line.find(abs) != std::string::npos) {
-          pending.clear(); // drop the "- " marker and this line
-          // Also skip the next line (timeout:)
-          std::string next;
-          std::getline(in, next);
-        } else {
-          out += pending + '\n';
-          pending.clear();
-          if (line.find(abs) == std::string::npos) {
-            out += line + '\n';
-          }
-        }
-      } else {
-        // Trim leading whitespace to detect list entry
-        std::string trimmed = line;
-        size_t start = trimmed.find_first_not_of(" \t");
-        if (start != std::string::npos && trimmed[start] == '-') {
-          pending = line;
-        } else if (line.find(abs) != std::string::npos) {
-          // direct mention (e.g. timeout line after we already dropped the command line)
-          // skip
-        } else {
-          out += line + '\n';
-        }
-      }
-    }
-    if (!pending.empty()) out += pending + '\n';
-    return out;
-  };
-
-  std::string patched = strip_mnemon_entries(existing);
-
-  // Append new hook entries in YAML list form
-  // We need to add under the appropriate event keys
-  struct HookEntry { const char* event; const char* filename; int timeout; bool enabled; };
-  std::vector<HookEntry> entries = {
-    {"on_session_start", "prime.sh", 10, true},
-    {"pre_llm_call",     "remind.sh", 10, sel.remind},
-    {"post_llm_call",    "nudge.sh",  10, sel.nudge},
-    {"on_session_finalize", "compact.sh", 30, sel.compact},
-  };
-
-  // Build a map of event → new entries to add
-  // Insert into existing YAML structure or append a hooks: block
-  bool has_hooks_section = patched.find("hooks:") != std::string::npos;
-  if (!has_hooks_section) {
-    if (!patched.empty() && patched.back() != '\n') patched += '\n';
-    patched += "hooks:\n";
-  }
-
-  // For each entry we need to add, insert under the right key
-  // Simple approach: rebuild the hooks section
-  // Parse existing hook event blocks and append our entries
-  for (const auto& e : entries) {
-    if (!e.enabled) continue;
-    std::string abs_hook = (abs_hooks_dir / e.filename).string();
-    std::string new_entry = std::string("    ") + "- command: " + abs_hook + "\n"
-                          + "      timeout: " + std::to_string(e.timeout) + "\n";
-    // Find "  <event>:" in patched and insert after it, or append a new event key
-    std::string event_key = std::string("    ") + e.event + ":";
-    auto pos = patched.find(event_key);
-    if (pos != std::string::npos) {
-      size_t insert_pos = patched.find('\n', pos);
-      if (insert_pos != std::string::npos) {
-        patched.insert(insert_pos + 1, new_entry);
-      }
-    } else {
-      // Add new event key under hooks:
-      auto hooks_pos = patched.find("hooks:");
-      if (hooks_pos != std::string::npos) {
-        size_t insert_pos = patched.find('\n', hooks_pos);
-        if (insert_pos != std::string::npos) {
-          patched.insert(insert_pos + 1, event_key + "\n" + new_entry);
-        }
-      }
-    }
-  }
-
-  // Write the file
-  std::ofstream f(cfg);
-  if (!f) throw std::runtime_error("write hermes config: " + cfg.string());
-  f << patched;
+  yaml::Value data = yaml_read_file(cfg);
+  add_hermes_hooks(data, abs_hooks_dir, sel);
+  yaml_write_file(cfg, data);
   return cfg;
 }
 
@@ -1213,40 +1231,17 @@ static int hermes_eject(const std::string& config_dir) {
   }
   remove_if_empty_dir((fs::path(config_dir) / "agent-hooks").string());
 
-  // Remove mnemon entries from config.yaml
+  // Remove mnemon entries from config.yaml, preserving unrelated config. Missing files read
+  // as an empty map and are removed (no-op) — mirrors the Go reference's HermesEject.
   fs::path cfg = fs::path(config_dir) / "config.yaml";
-  if (fs::exists(cfg, ec)) {
-    std::ifstream f(cfg);
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    std::string content = ss.str();
-    fs::path abs_hooks = fs::absolute(hooks_dir);
-    // Remove lines referencing our hooks
-    std::istringstream in(content);
-    std::string out, line, pending;
-    while (std::getline(in, line)) {
-      if (!pending.empty()) {
-        if (line.find(abs_hooks.string()) != std::string::npos) {
-          pending.clear();
-          std::string next; std::getline(in, next);
-        } else {
-          out += pending + '\n'; pending.clear();
-          out += line + '\n';
-        }
-      } else {
-        std::string t = line; size_t s = t.find_first_not_of(" \t");
-        if (s != std::string::npos && t[s] == '-') { pending = line; }
-        else if (line.find(abs_hooks.string()) == std::string::npos) { out += line + '\n'; }
-      }
-    }
-    if (!pending.empty()) out += pending + '\n';
-    if (out.empty() || out == "hooks:\n") {
-      fs::remove(cfg, ec);
-    } else {
-      std::ofstream wf(cfg);
-      wf << out;
-    }
+  try {
+    yaml::Value data = yaml_read_file(cfg);
+    remove_hermes_hooks(data);
+    yaml_write_or_remove(cfg, data);
     status_ok("Config", cfg.string() + " cleaned");
+  } catch (const std::exception& e) {
+    status_error("Config", e.what());
+    ++errs;
   }
 
   fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
