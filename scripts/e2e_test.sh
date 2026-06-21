@@ -1020,6 +1020,26 @@ step "setup --target bogus error mentions codebuddy"
 OUT=$($M --data-dir "$CODEBUDDY_SETUP_DIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions codebuddy" "$OUT" "codebuddy"
 
+WORKBUDDY_SETUP_DIR="$TESTDATA/setup_workbuddy"
+mkdir -p "$WORKBUDDY_SETUP_DIR"
+
+step "setup --target workbuddy --yes — accepted (installs skill + settings.json)"
+OUT=$(cd "$WORKBUDDY_SETUP_DIR" && $M --data-dir "$WORKBUDDY_SETUP_DIR" setup --target workbuddy --yes 2>&1 || true)
+assert_contains "workbuddy target accepted" "$OUT" "Skill"
+WORKBUDDY_SETTINGS="$WORKBUDDY_SETUP_DIR/.workbuddy/settings.json"
+if [ -f "$WORKBUDDY_SETTINGS" ]; then
+  WBJSON="$(cat "$WORKBUDDY_SETTINGS")"
+  assert_jq "workbuddy SessionStart prime hook" "$WBJSON" '.hooks.SessionStart[0].hooks[0].command | endswith("hooks/mnemon/prime.sh")' true
+  assert_jq "workbuddy UserPromptSubmit remind hook" "$WBJSON" '.hooks.UserPromptSubmit[0].hooks[0].command | endswith("hooks/mnemon/user_prompt.sh")' true
+  assert_jq "workbuddy Stop nudge hook" "$WBJSON" '.hooks.Stop[0].hooks[0].command | endswith("hooks/mnemon/stop.sh")' true
+else
+  fail "workbuddy settings.json written" "missing $WORKBUDDY_SETTINGS"
+fi
+
+step "setup --target bogus error mentions workbuddy"
+OUT=$($M --data-dir "$WORKBUDDY_SETUP_DIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions workbuddy" "$OUT" "workbuddy"
+
 OPENCLAW_SETUP_DIR="$TESTDATA/setup_openclaw"
 mkdir -p "$OPENCLAW_SETUP_DIR"
 

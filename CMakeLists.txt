@@ -62,6 +62,10 @@ set(ASSET_DEPS
   "${ASSET_ROOT}/codebuddy/prime.sh"
   "${ASSET_ROOT}/codebuddy/user_prompt.sh"
   "${ASSET_ROOT}/codebuddy/stop.sh"
+  "${ASSET_ROOT}/workbuddy/SKILL.md"
+  "${ASSET_ROOT}/workbuddy/prime.sh"
+  "${ASSET_ROOT}/workbuddy/user_prompt.sh"
+  "${ASSET_ROOT}/workbuddy/stop.sh"
 )
 add_custom_command(
   OUTPUT ${EMBED_GEN_HPP} ${EMBED_GEN_CPP}
