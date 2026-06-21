@@ -549,6 +549,40 @@ static Environment detect_cursor(bool global) {
   return env;
 }
 
+static Environment detect_trae(bool global) {
+  Environment env;
+  env.name = "trae";
+  env.display = "Trae";
+  fs::path global_dir = fs::path(home_dir()) / ".trae";
+  std::string local_dir = ".trae";
+  env.config_dir = global ? global_dir.string() : local_dir;
+
+  std::string bin;
+  if (look_path("trae", bin)) {
+    env.detected = true;
+    env.bin_path = bin;
+    env.version = exec_version(bin);
+  }
+  std::error_code ec;
+  if (fs::exists(global_dir, ec)) {
+    env.detected = true;
+  }
+  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
+  if (fs::exists(skill, ec)) {
+    env.installed = true;
+  } else {
+    fs::path hooks_path = fs::path(env.config_dir) / "hooks.json";
+    try {
+      nlohmann::json data = read_json_file(hooks_path);
+      if (json_contains_mnemon(data)) {
+        env.installed = true;
+      }
+    } catch (...) {
+    }
+  }
+  return env;
+}
+
 static Environment detect_nanobot(bool global) {
   Environment env;
   env.name = "nanobot";
@@ -624,8 +658,8 @@ static Environment detect_hermes() {
 }
 
 static std::vector<Environment> detect_environments(bool global) {
-  return {detect_claude(global), detect_codex(global), detect_cursor(global), detect_openclaw(global),
-          detect_nanobot(global), detect_pi(global), detect_hermes()};
+  return {detect_claude(global), detect_codex(global),  detect_cursor(global), detect_trae(global),
+          detect_openclaw(global), detect_nanobot(global), detect_pi(global), detect_hermes()};
 }
 
 // --- install pieces ---
@@ -1922,6 +1956,195 @@ static bool install_cursor(Environment env, bool global, bool setup_yes) {
   return true;
 }
 
+// --- trae ---
+
+static void remove_trae_hooks(nlohmann::json& data) {
+  if (!data.contains("hooks") || !data["hooks"].is_object()) {
+    return;
+  }
+  auto& hooks = data["hooks"];
+  static const char* keys[] = {"SessionStart", "UserPromptSubmit", "Stop", "PreToolUse", "PostToolUse", "Notification"};
+  for (const char* key : keys) {
+    if (!hooks.contains(key) || !hooks[key].is_array()) {
+      continue;
+    }
+    nlohmann::json filtered = filter_hook_array(hooks[key]);
+    if (filtered.empty()) {
+      hooks.erase(key);
+    } else {
+      hooks[key] = filtered;
+    }
+  }
+  if (hooks.empty()) {
+    data.erase("hooks");
+    if (data.contains("version") && data.size() == 1) {
+      data.erase("version");
+    }
+  }
+}
+
+static void add_trae_hook(nlohmann::json& hooks, const char* event, int loop_limit, const std::string& command) {
+  auto entry = nlohmann::json::object();
+  entry["hooks"] = nlohmann::json::array({{{"type", "command"}, {"command", command}, {"timeout", 30}}});
+  if (loop_limit > 0) {
+    entry["loop_limit"] = loop_limit;
+  }
+  if (!hooks.contains(event)) {
+    hooks[event] = nlohmann::json::array();
+  }
+  hooks[event].push_back(entry);
+}
+
+static void add_trae_hooks(nlohmann::json& data, const std::string& hooks_dir) {
+  remove_trae_hooks(data);
+  if (!data.contains("version")) {
+    data["version"] = 1;
+  }
+  if (!data.contains("hooks") || !data["hooks"].is_object()) {
+    data["hooks"] = nlohmann::json::object();
+  }
+  auto& hooks = data["hooks"];
+  fs::path hd = hooks_dir;
+  add_trae_hook(hooks, "SessionStart", 0, (hd / "prime.sh").string());
+  add_trae_hook(hooks, "UserPromptSubmit", 0, (hd / "user_prompt.sh").string());
+  add_trae_hook(hooks, "Stop", 1, (hd / "stop.sh").string());
+}
+
+static fs::path trae_write_skill(const std::string& config_dir) {
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  fs::create_directories(skill_dir);
+  fs::path p = skill_dir / "SKILL.md";
+  write_bytes(p, mnemon::embedded::trae_SKILL_md(), 0644);
+  return p;
+}
+
+static fs::path trae_write_hook(const std::string& config_dir, const std::string& filename, std::string_view content) {
+  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
+  write_bytes(hook_path, content, 0755);
+  return hook_path;
+}
+
+static fs::path trae_register_hooks(const std::string& config_dir) {
+  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
+  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
+  nlohmann::json data = read_json_file(hooks_path);
+  add_trae_hooks(data, abs_hooks_dir.string());
+  write_json_file(hooks_path, data);
+  return hooks_path;
+}
+
+static int trae_eject(const std::string& config_dir) {
+  int errs = 0;
+  std::cout << "\nRemoving Trae integration (" << config_dir << ")...\n";
+
+  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  std::error_code ec;
+  fs::remove_all(hooks_dir, ec);
+  if (ec) {
+    status_error("Hooks", ec.message());
+    ++errs;
+  } else {
+    status_ok("Hooks", hooks_dir.string() + " removed");
+  }
+  remove_if_empty_dir(fs::path(config_dir) / "hooks");
+
+  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
+  try {
+    nlohmann::json data = read_json_file(hooks_path);
+    remove_trae_hooks(data);
+    write_or_remove_json_file(hooks_path, data);
+    status_ok("Hooks config", hooks_path.string() + " cleaned");
+  } catch (const std::exception& e) {
+    status_error("Hooks config", e.what());
+    ++errs;
+  }
+
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  ec.clear();
+  fs::remove_all(skill_dir, ec);
+  if (ec) {
+    status_error("Skill", ec.message());
+    ++errs;
+  } else {
+    status_ok("Skill", skill_dir.string() + " removed");
+  }
+  remove_if_empty_dir(fs::path(config_dir) / "skills");
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
+static bool install_trae(Environment env, bool global, bool setup_yes) {
+  std::string config_dir = env.config_dir;
+  if (!global && !setup_yes && is_tty_in()) {
+    std::string local_dir = ".trae";
+    std::string global_dir = (fs::path(home_dir()) / ".trae").string();
+    size_t idx = select_one("Install scope", {
+        "Local — this project only (" + local_dir + "/)",
+        "Global — all projects (" + global_dir + "/)",
+    }, 0);
+    config_dir = (idx == 1) ? global_dir : local_dir;
+  }
+
+  std::cout << "\nSetting up Trae (" << config_dir << ")...\n";
+
+  std::cout << "\n[1/3] Skill\n";
+  try {
+    fs::path p = trae_write_skill(config_dir);
+    status_ok("Skill", p.string());
+  } catch (const std::exception& e) {
+    status_error("Skill", e.what());
+    return false;
+  }
+
+  std::cout << "\n[2/3] Prompts\n";
+  std::string prompt_path;
+  try {
+    fs::path p = write_prompt_files();
+    status_ok("Prompts", p.string());
+    prompt_path = p.string();
+  } catch (const std::exception& e) {
+    status_error("Prompts", e.what());
+    return false;
+  }
+
+  std::cout << "\n[3/3] Hooks\n";
+  struct HookFile {
+    const char* label;
+    const char* filename;
+    std::string_view content;
+  };
+  HookFile hook_files[] = {
+      {"Hook: prime", "prime.sh", mnemon::embedded::trae_prime_sh()},
+      {"Hook: remind", "user_prompt.sh", mnemon::embedded::trae_user_prompt_sh()},
+      {"Hook: nudge", "stop.sh", mnemon::embedded::trae_stop_sh()},
+  };
+  for (const auto& hf : hook_files) {
+    try {
+      fs::path p = trae_write_hook(config_dir, hf.filename, hf.content);
+      status_ok(hf.label, p.string());
+    } catch (const std::exception& e) {
+      status_error(hf.label, e.what());
+      return false;
+    }
+  }
+  try {
+    fs::path p = trae_register_hooks(config_dir);
+    status_updated("Hooks config", p.string());
+  } catch (const std::exception& e) {
+    status_error("Hooks config", e.what());
+    return false;
+  }
+
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Hooks   " << config_dir << "/hooks.json (SessionStart, UserPromptSubmit, Stop)\n";
+  std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
+  std::cout << "Restart Trae to activate the mnemon skill and hooks.\n";
+  std::cout << "Run 'mnemon setup --eject --target trae' to remove.\n";
+  return true;
+}
+
 // --- install flows ---
 
 static HookSelection select_optional_hooks(bool setup_yes) {
@@ -2125,6 +2348,9 @@ static bool install_env(Environment* env, bool global, bool setup_yes, const Run
   if (env->name == "cursor") {
     return install_cursor(*env, global, setup_yes);
   }
+  if (env->name == "trae") {
+    return install_trae(*env, global, setup_yes);
+  }
   if (env->name == "openclaw") {
     return install_openclaw(*env, global, setup_yes, opt);
   }
@@ -2151,6 +2377,11 @@ static int eject_env(Environment* env, bool yes) {
   }
   if (env->name == "cursor") {
     return cursor_eject(env->config_dir);
+  }
+  if (env->name == "trae") {
+    int errs = trae_eject(env->config_dir);
+    eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
+    return errs;
   }
   if (env->name == "openclaw") {
     return openclaw_eject(env->config_dir, yes);
@@ -2292,8 +2523,8 @@ static void run_eject_flow(const RunOptions& opt) {
 } // namespace
 
 void run(const RunOptions& opt) {
-  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
-    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, openclaw, nanobot, pi, or hermes)");
+  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "trae" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
+    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, trae, openclaw, nanobot, pi, or hermes)");
   }
   if (opt.eject) {
     run_eject_flow(opt);

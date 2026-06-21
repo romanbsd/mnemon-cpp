@@ -49,6 +49,10 @@ set(ASSET_DEPS
   "${ASSET_ROOT}/cursor/prime.sh"
   "${ASSET_ROOT}/cursor/stop.sh"
   "${ASSET_ROOT}/cursor/compact.sh"
+  "${ASSET_ROOT}/trae/SKILL.md"
+  "${ASSET_ROOT}/trae/prime.sh"
+  "${ASSET_ROOT}/trae/user_prompt.sh"
+  "${ASSET_ROOT}/trae/stop.sh"
 )
 add_custom_command(
   OUTPUT ${EMBED_GEN_HPP} ${EMBED_GEN_CPP}

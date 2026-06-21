@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=21823d039a44d58b45f6b3ef5577c73f1731d460
-last_sha_subject=feat(setup): add Cursor IDE integration
-last_sha_date=2026-06-17T11:21:54Z
+last_sha=4187814ff0af2ee0c67749fc340465f913208d84
+last_sha_subject=feat(setup): add Trae integration
+last_sha_date=2026-06-20T22:15:58+08:00
