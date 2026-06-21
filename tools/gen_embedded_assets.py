@@ -39,6 +39,11 @@ ASSET_FILES = [
     "trae/prime.sh",
     "trae/user_prompt.sh",
     "trae/stop.sh",
+    "qoder/SKILL.md",
+    "qoderwork/SKILL.md",
+    "qoder/prime.sh",
+    "qoder/user_prompt.sh",
+    "qoder/stop.sh",
 ]
 
 
