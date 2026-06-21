@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=8731b3fe34bcd18dd17e83ab9a6017691ffa258c
-last_sha_subject=feat(setup): add Qoder and QoderWork integrations (#62)
-last_sha_date=2026-06-21T00:21:26+08:00
+last_sha=2d50be897936d34247b3fd461c9666c60252da60
+last_sha_subject=feat(setup): add CodeBuddy integration (#64)
+last_sha_date=2026-06-21T01:16:09+08:00

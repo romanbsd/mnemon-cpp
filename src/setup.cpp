@@ -650,6 +650,40 @@ static Environment detect_qoderwork() {
   return env;
 }
 
+static Environment detect_codebuddy(bool global) {
+  Environment env;
+  env.name = "codebuddy";
+  env.display = "CodeBuddy";
+  fs::path global_dir = fs::path(home_dir()) / ".codebuddy";
+  std::string local_dir = ".codebuddy";
+  env.config_dir = global ? global_dir.string() : local_dir;
+
+  std::string bin;
+  if (look_path("codebuddy", bin)) {
+    env.detected = true;
+    env.bin_path = bin;
+    env.version = exec_version(bin);
+  }
+  std::error_code ec;
+  if (fs::exists(global_dir, ec)) {
+    env.detected = true;
+  }
+  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
+  if (fs::exists(skill, ec)) {
+    env.installed = true;
+  } else {
+    fs::path settings_path = fs::path(env.config_dir) / "settings.json";
+    try {
+      nlohmann::json data = read_json_file(settings_path);
+      if (json_contains_mnemon(data)) {
+        env.installed = true;
+      }
+    } catch (...) {
+    }
+  }
+  return env;
+}
+
 static Environment detect_nanobot(bool global) {
   Environment env;
   env.name = "nanobot";
@@ -725,9 +759,9 @@ static Environment detect_hermes() {
 }
 
 static std::vector<Environment> detect_environments(bool global) {
-  return {detect_claude(global),  detect_codex(global),     detect_cursor(global), detect_trae(global),
-          detect_qoder(global),   detect_qoderwork(),       detect_openclaw(global), detect_nanobot(global),
-          detect_pi(global),      detect_hermes()};
+  return {detect_claude(global),    detect_codex(global),   detect_cursor(global),   detect_trae(global),
+          detect_qoder(global),     detect_qoderwork(),     detect_codebuddy(global), detect_openclaw(global),
+          detect_nanobot(global),   detect_pi(global),      detect_hermes()};
 }
 
 // --- install pieces ---
@@ -2410,6 +2444,180 @@ static bool install_qoderwork(Environment env) {
                             "Run 'mnemon setup --eject --target qoderwork' to remove.");
 }
 
+// --- codebuddy ---
+
+static void remove_codebuddy_hooks(nlohmann::json& data) {
+  if (!data.contains("hooks") || !data["hooks"].is_object()) {
+    return;
+  }
+  auto& hooks = data["hooks"];
+  static const char* keys[] = {"SessionStart", "UserPromptSubmit", "Stop",      "PreToolUse", "PostToolUse",
+                               "Notification", "PreCompact",       "SessionEnd", "SubagentStop"};
+  for (const char* key : keys) {
+    if (!hooks.contains(key) || !hooks[key].is_array()) {
+      continue;
+    }
+    nlohmann::json filtered = filter_hook_array(hooks[key]);
+    if (filtered.empty()) {
+      hooks.erase(key);
+    } else {
+      hooks[key] = filtered;
+    }
+  }
+  if (hooks.empty()) {
+    data.erase("hooks");
+  }
+}
+
+static void add_codebuddy_hooks(nlohmann::json& data, const std::string& hooks_dir) {
+  remove_codebuddy_hooks(data);
+  if (!data.contains("hooks") || !data["hooks"].is_object()) {
+    data["hooks"] = nlohmann::json::object();
+  }
+  auto& hooks = data["hooks"];
+  fs::path hd = hooks_dir;
+  // CodeBuddy hook entries share Qoder's {type, command} nested shape.
+  add_qoder_hook(hooks, "SessionStart", (hd / "prime.sh").string());
+  add_qoder_hook(hooks, "UserPromptSubmit", (hd / "user_prompt.sh").string());
+  add_qoder_hook(hooks, "Stop", (hd / "stop.sh").string());
+}
+
+static fs::path codebuddy_write_skill(const std::string& config_dir) {
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  fs::create_directories(skill_dir);
+  fs::path p = skill_dir / "SKILL.md";
+  write_bytes(p, mnemon::embedded::codebuddy_SKILL_md(), 0644);
+  return p;
+}
+
+static fs::path codebuddy_write_hook(const std::string& config_dir, const std::string& filename,
+                                     std::string_view content) {
+  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
+  write_bytes(hook_path, content, 0755);
+  return hook_path;
+}
+
+static fs::path codebuddy_register_hooks(const std::string& config_dir) {
+  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
+  fs::path settings_path = fs::path(config_dir) / "settings.json";
+  nlohmann::json data = read_json_file(settings_path);
+  add_codebuddy_hooks(data, abs_hooks_dir.string());
+  write_json_file(settings_path, data);
+  return settings_path;
+}
+
+static int codebuddy_eject(const std::string& config_dir) {
+  int errs = 0;
+  std::cout << "\nRemoving CodeBuddy integration (" << config_dir << ")...\n";
+
+  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  std::error_code ec;
+  fs::remove_all(hooks_dir, ec);
+  if (ec) {
+    status_error("Hooks", ec.message());
+    ++errs;
+  } else {
+    status_ok("Hooks", hooks_dir.string() + " removed");
+  }
+  remove_if_empty_dir(fs::path(config_dir) / "hooks");
+
+  fs::path settings_path = fs::path(config_dir) / "settings.json";
+  try {
+    nlohmann::json data = read_json_file(settings_path);
+    remove_codebuddy_hooks(data);
+    write_or_remove_json_file(settings_path, data);
+    status_ok("Settings", settings_path.string() + " cleaned");
+  } catch (const std::exception& e) {
+    status_error("Settings", e.what());
+    ++errs;
+  }
+
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  ec.clear();
+  fs::remove_all(skill_dir, ec);
+  if (ec) {
+    status_error("Skill", ec.message());
+    ++errs;
+  } else {
+    status_ok("Skill", skill_dir.string() + " removed");
+  }
+  remove_if_empty_dir(fs::path(config_dir) / "skills");
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
+static bool install_codebuddy(Environment env, bool global, bool setup_yes) {
+  std::string config_dir = env.config_dir;
+  if (!global && !setup_yes && is_tty_in()) {
+    std::string local_dir = ".codebuddy";
+    std::string global_dir = (fs::path(home_dir()) / ".codebuddy").string();
+    size_t idx = select_one("Install scope", {
+        "Local — this project only (" + local_dir + "/)",
+        "Global — all projects (" + global_dir + "/)",
+    }, 0);
+    config_dir = (idx == 1) ? global_dir : local_dir;
+  }
+
+  std::cout << "\nSetting up CodeBuddy (" << config_dir << ")...\n";
+
+  std::cout << "\n[1/3] Skill\n";
+  try {
+    fs::path p = codebuddy_write_skill(config_dir);
+    status_ok("Skill", p.string());
+  } catch (const std::exception& e) {
+    status_error("Skill", e.what());
+    return false;
+  }
+
+  std::cout << "\n[2/3] Prompts\n";
+  std::string prompt_path;
+  try {
+    fs::path p = write_prompt_files();
+    status_ok("Prompts", p.string());
+    prompt_path = p.string();
+  } catch (const std::exception& e) {
+    status_error("Prompts", e.what());
+    return false;
+  }
+
+  std::cout << "\n[3/3] Hooks\n";
+  struct HookFile {
+    const char* label;
+    const char* filename;
+    std::string_view content;
+  };
+  HookFile hook_files[] = {
+      {"Hook: prime", "prime.sh", mnemon::embedded::codebuddy_prime_sh()},
+      {"Hook: remind", "user_prompt.sh", mnemon::embedded::codebuddy_user_prompt_sh()},
+      {"Hook: nudge", "stop.sh", mnemon::embedded::codebuddy_stop_sh()},
+  };
+  for (const auto& hf : hook_files) {
+    try {
+      fs::path p = codebuddy_write_hook(config_dir, hf.filename, hf.content);
+      status_ok(hf.label, p.string());
+    } catch (const std::exception& e) {
+      status_error(hf.label, e.what());
+      return false;
+    }
+  }
+  try {
+    fs::path p = codebuddy_register_hooks(config_dir);
+    status_updated("Settings", p.string());
+  } catch (const std::exception& e) {
+    status_error("Settings", e.what());
+    return false;
+  }
+
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill    " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Hooks    " << config_dir << "/settings.json (SessionStart, UserPromptSubmit, Stop)\n";
+  std::cout << "  Prompts  " << prompt_path << "/ (guide.md, skill.md)\n\n";
+  std::cout << "Restart CodeBuddy Code to activate the mnemon skill and hooks.\n";
+  std::cout << "Run 'mnemon setup --eject --target codebuddy' to remove.\n";
+  return true;
+}
+
 // --- install flows ---
 
 static HookSelection select_optional_hooks(bool setup_yes) {
@@ -2622,6 +2830,9 @@ static bool install_env(Environment* env, bool global, bool setup_yes, const Run
   if (env->name == "qoderwork") {
     return install_qoderwork(*env);
   }
+  if (env->name == "codebuddy") {
+    return install_codebuddy(*env, global, setup_yes);
+  }
   if (env->name == "openclaw") {
     return install_openclaw(*env, global, setup_yes, opt);
   }
@@ -2661,6 +2872,11 @@ static int eject_env(Environment* env, bool yes) {
   }
   if (env->name == "qoderwork") {
     int errs = eject_qoder("QoderWork", env->config_dir);
+    eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
+    return errs;
+  }
+  if (env->name == "codebuddy") {
+    int errs = codebuddy_eject(env->config_dir);
     eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
     return errs;
   }
@@ -2804,8 +3020,8 @@ static void run_eject_flow(const RunOptions& opt) {
 } // namespace
 
 void run(const RunOptions& opt) {
-  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "trae" && opt.target != "qoder" && opt.target != "qoderwork" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
-    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, trae, qoder, qoderwork, openclaw, nanobot, pi, or hermes)");
+  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "trae" && opt.target != "qoder" && opt.target != "qoderwork" && opt.target != "codebuddy" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
+    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, trae, qoder, qoderwork, codebuddy, openclaw, nanobot, pi, or hermes)");
   }
   if (opt.eject) {
     run_eject_flow(opt);

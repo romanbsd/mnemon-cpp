@@ -44,6 +44,10 @@ ASSET_FILES = [
     "qoder/prime.sh",
     "qoder/user_prompt.sh",
     "qoder/stop.sh",
+    "codebuddy/SKILL.md",
+    "codebuddy/prime.sh",
+    "codebuddy/user_prompt.sh",
+    "codebuddy/stop.sh",
 ]
 
 
