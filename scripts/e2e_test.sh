@@ -1000,6 +1000,26 @@ else
   fail "qoderwork settings.json written" "missing $QODERWORK_SETTINGS"
 fi
 
+CODEBUDDY_SETUP_DIR="$TESTDATA/setup_codebuddy"
+mkdir -p "$CODEBUDDY_SETUP_DIR"
+
+step "setup --target codebuddy --yes — accepted (installs skill + settings.json)"
+OUT=$(cd "$CODEBUDDY_SETUP_DIR" && $M --data-dir "$CODEBUDDY_SETUP_DIR" setup --target codebuddy --yes 2>&1 || true)
+assert_contains "codebuddy target accepted" "$OUT" "Skill"
+CODEBUDDY_SETTINGS="$CODEBUDDY_SETUP_DIR/.codebuddy/settings.json"
+if [ -f "$CODEBUDDY_SETTINGS" ]; then
+  CBJSON="$(cat "$CODEBUDDY_SETTINGS")"
+  assert_jq "codebuddy SessionStart prime hook" "$CBJSON" '.hooks.SessionStart[0].hooks[0].command | endswith("hooks/mnemon/prime.sh")' true
+  assert_jq "codebuddy UserPromptSubmit remind hook" "$CBJSON" '.hooks.UserPromptSubmit[0].hooks[0].command | endswith("hooks/mnemon/user_prompt.sh")' true
+  assert_jq "codebuddy Stop nudge hook" "$CBJSON" '.hooks.Stop[0].hooks[0].command | endswith("hooks/mnemon/stop.sh")' true
+else
+  fail "codebuddy settings.json written" "missing $CODEBUDDY_SETTINGS"
+fi
+
+step "setup --target bogus error mentions codebuddy"
+OUT=$($M --data-dir "$CODEBUDDY_SETUP_DIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions codebuddy" "$OUT" "codebuddy"
+
 OPENCLAW_SETUP_DIR="$TESTDATA/setup_openclaw"
 mkdir -p "$OPENCLAW_SETUP_DIR"
 
