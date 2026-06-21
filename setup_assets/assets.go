@@ -32,6 +32,18 @@ var CodexUserPromptHook []byte
 //go:embed codex/stop.sh
 var CodexStopHook []byte
 
+//go:embed cursor/SKILL.md
+var CursorSkill []byte
+
+//go:embed cursor/prime.sh
+var CursorPrimeHook []byte
+
+//go:embed cursor/stop.sh
+var CursorStopHook []byte
+
+//go:embed cursor/compact.sh
+var CursorCompactHook []byte
+
 //go:embed openclaw/SKILL.md
 var OpenClawSkill []byte
 
@@ -82,5 +94,5 @@ var HermesCompactHook []byte
 
 // All returns the embedded filesystem for inspection.
 //
-//go:embed claude codex openclaw nanoclaw nanobot pi hermes
+//go:embed claude codex cursor openclaw nanoclaw nanobot pi hermes
 var All embed.FS

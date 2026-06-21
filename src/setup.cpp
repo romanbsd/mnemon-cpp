@@ -524,6 +524,31 @@ static Environment detect_codex(bool global) {
   return env;
 }
 
+static Environment detect_cursor(bool global) {
+  Environment env;
+  env.name = "cursor";
+  env.display = "Cursor";
+  fs::path global_dir = fs::path(home_dir()) / ".cursor";
+  std::string local_dir = ".cursor";
+  env.config_dir = global ? global_dir.string() : local_dir;
+
+  std::string bin;
+  if (look_path("cursor", bin)) {
+    env.detected = true;
+    env.bin_path = bin;
+    env.version = exec_version(bin);
+  }
+  std::error_code ec;
+  if (fs::exists(global_dir, ec)) {
+    env.detected = true;
+  }
+  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
+  if (fs::exists(skill, ec)) {
+    env.installed = true;
+  }
+  return env;
+}
+
 static Environment detect_nanobot(bool global) {
   Environment env;
   env.name = "nanobot";
@@ -599,8 +624,8 @@ static Environment detect_hermes() {
 }
 
 static std::vector<Environment> detect_environments(bool global) {
-  return {detect_claude(global), detect_codex(global), detect_openclaw(global), detect_nanobot(global),
-          detect_pi(global), detect_hermes()};
+  return {detect_claude(global), detect_codex(global), detect_cursor(global), detect_openclaw(global),
+          detect_nanobot(global), detect_pi(global), detect_hermes()};
 }
 
 // --- install pieces ---
@@ -1648,6 +1673,255 @@ static bool install_codex(Environment env, bool global, bool setup_yes) {
   return true;
 }
 
+// --- cursor ---
+
+static void remove_cursor_hooks(nlohmann::json& data) {
+  if (!data.contains("hooks") || !data["hooks"].is_object()) {
+    return;
+  }
+  auto& hooks = data["hooks"];
+  static const char* keys[] = {"sessionStart", "stop", "preCompact"};
+  for (const char* key : keys) {
+    if (!hooks.contains(key) || !hooks[key].is_array()) {
+      continue;
+    }
+    nlohmann::json filtered = filter_hook_array(hooks[key]);
+    if (filtered.empty()) {
+      hooks.erase(key);
+    } else {
+      hooks[key] = filtered;
+    }
+  }
+  if (hooks.empty()) {
+    data.erase("hooks");
+    if (data.contains("version") && data.size() == 1) {
+      data.erase("version");
+    }
+  }
+}
+
+static void add_cursor_hooks(nlohmann::json& data, const std::string& hooks_dir, const HookSelection& sel) {
+  remove_cursor_hooks(data);
+  if (!data.contains("version")) {
+    data["version"] = 1;
+  }
+  if (!data.contains("hooks") || !data["hooks"].is_object()) {
+    data["hooks"] = nlohmann::json::object();
+  }
+  auto& hooks = data["hooks"];
+  fs::path hd = hooks_dir;
+
+  auto session_entry = nlohmann::json::object();
+  session_entry["command"] = (hd / "prime.sh").string();
+  session_entry["timeout"] = 30;
+  if (!hooks.contains("sessionStart")) {
+    hooks["sessionStart"] = nlohmann::json::array();
+  }
+  hooks["sessionStart"].push_back(session_entry);
+
+  if (sel.nudge) {
+    auto stop_entry = nlohmann::json::object();
+    stop_entry["command"] = (hd / "stop.sh").string();
+    stop_entry["timeout"] = 30;
+    stop_entry["loop_limit"] = 1;
+    if (!hooks.contains("stop")) {
+      hooks["stop"] = nlohmann::json::array();
+    }
+    hooks["stop"].push_back(stop_entry);
+  }
+
+  if (sel.compact) {
+    auto compact_entry = nlohmann::json::object();
+    compact_entry["command"] = (hd / "compact.sh").string();
+    compact_entry["timeout"] = 30;
+    if (!hooks.contains("preCompact")) {
+      hooks["preCompact"] = nlohmann::json::array();
+    }
+    hooks["preCompact"].push_back(compact_entry);
+  }
+}
+
+static fs::path cursor_write_skill(const std::string& config_dir) {
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  fs::create_directories(skill_dir);
+  fs::path p = skill_dir / "SKILL.md";
+  write_bytes(p, mnemon::embedded::cursor_SKILL_md(), 0644);
+  return p;
+}
+
+static fs::path cursor_write_hook(const std::string& config_dir, const std::string& filename, std::string_view content) {
+  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
+  write_bytes(hook_path, content, 0755);
+  return hook_path;
+}
+
+static fs::path cursor_register_hooks(const std::string& config_dir, const HookSelection& sel) {
+  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
+  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
+  nlohmann::json data = read_json_file(hooks_path);
+  add_cursor_hooks(data, abs_hooks_dir.string(), sel);
+  write_json_file(hooks_path, data);
+  return hooks_path;
+}
+
+static int cursor_eject(const std::string& config_dir) {
+  int errs = 0;
+  std::cout << "\nRemoving Cursor integration (" << config_dir << ")...\n";
+
+  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  std::error_code ec;
+  fs::remove_all(hooks_dir, ec);
+  if (ec) {
+    status_error("Hooks", ec.message());
+    ++errs;
+  } else {
+    status_ok("Hooks", hooks_dir.string() + " removed");
+  }
+  remove_if_empty_dir(fs::path(config_dir) / "hooks");
+
+  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
+  try {
+    nlohmann::json data = read_json_file(hooks_path);
+    remove_cursor_hooks(data);
+    write_or_remove_json_file(hooks_path, data);
+    status_ok("Hooks config", hooks_path.string() + " cleaned");
+  } catch (const std::exception& e) {
+    status_error("Hooks config", e.what());
+    ++errs;
+  }
+
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  ec.clear();
+  fs::remove_all(skill_dir, ec);
+  if (ec) {
+    status_error("Skill", ec.message());
+    ++errs;
+  } else {
+    status_ok("Skill", skill_dir.string() + " removed");
+  }
+  remove_if_empty_dir(fs::path(config_dir) / "skills");
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
+static HookSelection select_cursor_optional_hooks(bool setup_yes) {
+  HookSelection sel{true, true, false};
+  if (setup_yes || !is_tty_in()) {
+    return sel;
+  }
+  while (true) {
+    std::cout << "\n  " << c_bold() << "Select hooks to enable" << c_reset() << " " << c_dim()
+              << "(toggle: 1-2, Enter=done)" << c_reset() << "\n";
+    std::cout << "  1. " << (sel.nudge ? "[x]" : "[ ]")
+              << " Nudge   — auto-submit a writeback reminder after responses (recommended)\n";
+    std::cout << "  2. " << (sel.compact ? "[x]" : "[ ]") << " Compact — show a reminder before context compaction\n";
+    std::cout << "› " << std::flush;
+    std::string line;
+    if (!std::getline(std::cin, line) || line.empty()) {
+      break;
+    }
+    try {
+      int n = std::stoi(line);
+      if (n == 1) {
+        sel.nudge = !sel.nudge;
+      } else if (n == 2) {
+        sel.compact = !sel.compact;
+      }
+    } catch (...) {
+    }
+  }
+  return sel;
+}
+
+static bool install_cursor(Environment env, bool global, bool setup_yes) {
+  std::string config_dir = env.config_dir;
+  if (!global && !setup_yes && is_tty_in()) {
+    std::string local_dir = ".cursor";
+    std::string global_dir = (fs::path(home_dir()) / ".cursor").string();
+    size_t idx = select_one("Install scope", {
+        "Local — this project only (" + local_dir + "/)",
+        "Global — all projects (" + global_dir + "/)",
+    }, 0);
+    config_dir = (idx == 1) ? global_dir : local_dir;
+  }
+
+  std::cout << "\nSetting up Cursor (" << config_dir << ")...\n";
+
+  std::cout << "\n[1/4] Skill\n";
+  try {
+    fs::path p = cursor_write_skill(config_dir);
+    status_ok("Skill", p.string());
+  } catch (const std::exception& e) {
+    status_error("Skill", e.what());
+    return false;
+  }
+
+  std::cout << "\n[2/4] Prompts\n";
+  std::string prompt_path;
+  try {
+    fs::path p = write_prompt_files();
+    status_ok("Prompts", p.string());
+    prompt_path = p.string();
+  } catch (const std::exception& e) {
+    status_error("Prompts", e.what());
+    return false;
+  }
+
+  std::cout << "\n[3/4] Hooks\n";
+  HookSelection sel = select_cursor_optional_hooks(setup_yes);
+  try {
+    fs::path p = cursor_write_hook(config_dir, "prime.sh", mnemon::embedded::cursor_prime_sh());
+    status_ok("Hook: prime", p.string());
+  } catch (const std::exception& e) {
+    status_error("Hook: prime", e.what());
+    return false;
+  }
+  if (sel.nudge) {
+    try {
+      fs::path p = cursor_write_hook(config_dir, "stop.sh", mnemon::embedded::cursor_stop_sh());
+      status_ok("Hook: nudge", p.string());
+    } catch (const std::exception& e) {
+      status_error("Hook: nudge", e.what());
+      return false;
+    }
+  }
+  if (sel.compact) {
+    try {
+      fs::path p = cursor_write_hook(config_dir, "compact.sh", mnemon::embedded::cursor_compact_sh());
+      status_ok("Hook: compact", p.string());
+    } catch (const std::exception& e) {
+      status_error("Hook: compact", e.what());
+      return false;
+    }
+  }
+
+  std::cout << "\n[4/4] Config\n";
+  try {
+    fs::path p = cursor_register_hooks(config_dir, sel);
+    status_updated("Hooks config", p.string());
+  } catch (const std::exception& e) {
+    status_error("Hooks config", e.what());
+    return false;
+  }
+
+  std::string hook_names = "prime";
+  if (sel.nudge) {
+    hook_names += ", nudge";
+  }
+  if (sel.compact) {
+    hook_names += ", compact";
+  }
+
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Hooks   " << config_dir << "/hooks.json (" << hook_names << ")\n";
+  std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
+  std::cout << "Start a new Cursor agent session to activate the mnemon skill.\n";
+  std::cout << "Run 'mnemon setup --eject --target cursor' to remove.\n";
+  return true;
+}
+
 // --- install flows ---
 
 static HookSelection select_optional_hooks(bool setup_yes) {
@@ -1848,6 +2122,9 @@ static bool install_env(Environment* env, bool global, bool setup_yes, const Run
   if (env->name == "codex") {
     return install_codex(*env, global, setup_yes);
   }
+  if (env->name == "cursor") {
+    return install_cursor(*env, global, setup_yes);
+  }
   if (env->name == "openclaw") {
     return install_openclaw(*env, global, setup_yes, opt);
   }
@@ -1871,6 +2148,9 @@ static int eject_env(Environment* env, bool yes) {
     int errs = codex_eject(env->config_dir);
     eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
     return errs;
+  }
+  if (env->name == "cursor") {
+    return cursor_eject(env->config_dir);
   }
   if (env->name == "openclaw") {
     return openclaw_eject(env->config_dir, yes);
@@ -2012,8 +2292,8 @@ static void run_eject_flow(const RunOptions& opt) {
 } // namespace
 
 void run(const RunOptions& opt) {
-  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
-    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, openclaw, nanobot, pi, or hermes)");
+  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
+    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, openclaw, nanobot, pi, or hermes)");
   }
   if (opt.eject) {
     run_eject_flow(opt);
