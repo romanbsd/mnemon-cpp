@@ -960,6 +960,46 @@ step "setup --target bogus error mentions trae"
 OUT=$($M --data-dir "$TRAE_SETUP_DIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions trae" "$OUT" "trae"
 
+QODER_SETUP_DIR="$TESTDATA/setup_qoder"
+mkdir -p "$QODER_SETUP_DIR"
+
+step "setup --target qoder --yes — accepted (installs skill + settings.json)"
+OUT=$(cd "$QODER_SETUP_DIR" && $M --data-dir "$QODER_SETUP_DIR" setup --target qoder --yes 2>&1 || true)
+assert_contains "qoder target accepted" "$OUT" "Skill"
+QODER_SETTINGS="$QODER_SETUP_DIR/.qoder/settings.json"
+if [ -f "$QODER_SETTINGS" ]; then
+  QJSON="$(cat "$QODER_SETTINGS")"
+  assert_jq "qoder SessionStart prime hook" "$QJSON" '.hooks.SessionStart[0].hooks[0].command | endswith("hooks/mnemon/prime.sh")' true
+  assert_jq "qoder UserPromptSubmit remind hook" "$QJSON" '.hooks.UserPromptSubmit[0].hooks[0].command | endswith("hooks/mnemon/user_prompt.sh")' true
+  assert_jq "qoder Stop nudge hook" "$QJSON" '.hooks.Stop[0].hooks[0].command | endswith("hooks/mnemon/stop.sh")' true
+  assert_jq "qoder hook type command" "$QJSON" '.hooks.SessionStart[0].hooks[0].type' command
+else
+  fail "qoder settings.json written" "missing $QODER_SETTINGS"
+fi
+
+step "setup --target bogus error mentions qoder"
+OUT=$($M --data-dir "$QODER_SETUP_DIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions qoder" "$OUT" "qoder"
+
+QODERWORK_HOME="$TESTDATA/setup_qoderwork_home"
+mkdir -p "$QODERWORK_HOME"
+
+step "setup --target qoderwork --yes — accepted (user-global ~/.qoderwork)"
+OUT=$(HOME="$QODERWORK_HOME" $M --data-dir "$QODERWORK_HOME/.mnemon-data" setup --target qoderwork --yes 2>&1 || true)
+assert_contains "qoderwork target accepted" "$OUT" "Skill"
+QODERWORK_SETTINGS="$QODERWORK_HOME/.qoderwork/settings.json"
+if [ -f "$QODERWORK_SETTINGS" ]; then
+  QWJSON="$(cat "$QODERWORK_SETTINGS")"
+  assert_jq "qoderwork SessionStart prime hook" "$QWJSON" '.hooks.SessionStart[0].hooks[0].command | endswith("hooks/mnemon/prime.sh")' true
+  if [ -f "$QODERWORK_HOME/.qoderwork/skills/mnemon/SKILL.md" ]; then
+    pass "qoderwork skill written" ""
+  else
+    fail "qoderwork skill written" "missing SKILL.md"
+  fi
+else
+  fail "qoderwork settings.json written" "missing $QODERWORK_SETTINGS"
+fi
+
 OPENCLAW_SETUP_DIR="$TESTDATA/setup_openclaw"
 mkdir -p "$OPENCLAW_SETUP_DIR"
 
