@@ -31,6 +31,10 @@ ASSET_FILES = [
     "codex/prime.sh",
     "codex/stop.sh",
     "codex/user_prompt.sh",
+    "cursor/SKILL.md",
+    "cursor/prime.sh",
+    "cursor/stop.sh",
+    "cursor/compact.sh",
 ]
 
 

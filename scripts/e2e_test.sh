@@ -917,6 +917,27 @@ step "setup --target bogus error mentions codex"
 OUT=$($M --data-dir "$SETUPDIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions codex" "$OUT" "codex"
 
+CURSOR_SETUP_DIR="$TESTDATA/setup_cursor"
+mkdir -p "$CURSOR_SETUP_DIR"
+
+step "setup --target cursor --yes — accepted (installs skill + hooks.json)"
+OUT=$(cd "$CURSOR_SETUP_DIR" && $M --data-dir "$CURSOR_SETUP_DIR" setup --target cursor --yes 2>&1 || true)
+assert_contains "cursor target accepted" "$OUT" "Skill"
+CURSOR_HOOKS="$CURSOR_SETUP_DIR/.cursor/hooks.json"
+if [ -f "$CURSOR_HOOKS" ]; then
+  HJSON="$(cat "$CURSOR_HOOKS")"
+  assert_jq "cursor version field" "$HJSON" '.version' 1
+  assert_jq "cursor sessionStart prime hook" "$HJSON" '.hooks.sessionStart[0].command | endswith("hooks/mnemon/prime.sh")' true
+  assert_jq "cursor stop hook loop_limit" "$HJSON" '.hooks.stop[0].loop_limit' 1
+  assert_jq "cursor no preCompact by default" "$HJSON" '.hooks | has("preCompact")' false
+else
+  fail "cursor hooks.json written" "missing $CURSOR_HOOKS"
+fi
+
+step "setup --target bogus error mentions cursor"
+OUT=$($M --data-dir "$CURSOR_SETUP_DIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions cursor" "$OUT" "cursor"
+
 OPENCLAW_SETUP_DIR="$TESTDATA/setup_openclaw"
 mkdir -p "$OPENCLAW_SETUP_DIR"
 
