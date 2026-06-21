@@ -35,6 +35,10 @@ ASSET_FILES = [
     "cursor/prime.sh",
     "cursor/stop.sh",
     "cursor/compact.sh",
+    "trae/SKILL.md",
+    "trae/prime.sh",
+    "trae/user_prompt.sh",
+    "trae/stop.sh",
 ]
 
 

@@ -938,6 +938,28 @@ step "setup --target bogus error mentions cursor"
 OUT=$($M --data-dir "$CURSOR_SETUP_DIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions cursor" "$OUT" "cursor"
 
+TRAE_SETUP_DIR="$TESTDATA/setup_trae"
+mkdir -p "$TRAE_SETUP_DIR"
+
+step "setup --target trae --yes — accepted (installs skill + hooks.json)"
+OUT=$(cd "$TRAE_SETUP_DIR" && $M --data-dir "$TRAE_SETUP_DIR" setup --target trae --yes 2>&1 || true)
+assert_contains "trae target accepted" "$OUT" "Skill"
+TRAE_HOOKS="$TRAE_SETUP_DIR/.trae/hooks.json"
+if [ -f "$TRAE_HOOKS" ]; then
+  THJSON="$(cat "$TRAE_HOOKS")"
+  assert_jq "trae version field" "$THJSON" '.version' 1
+  assert_jq "trae SessionStart prime hook" "$THJSON" '.hooks.SessionStart[0].hooks[0].command | endswith("hooks/mnemon/prime.sh")' true
+  assert_jq "trae UserPromptSubmit remind hook" "$THJSON" '.hooks.UserPromptSubmit[0].hooks[0].command | endswith("hooks/mnemon/user_prompt.sh")' true
+  assert_jq "trae Stop loop_limit" "$THJSON" '.hooks.Stop[0].loop_limit' 1
+  assert_jq "trae hook timeout" "$THJSON" '.hooks.SessionStart[0].hooks[0].timeout' 30
+else
+  fail "trae hooks.json written" "missing $TRAE_HOOKS"
+fi
+
+step "setup --target bogus error mentions trae"
+OUT=$($M --data-dir "$TRAE_SETUP_DIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions trae" "$OUT" "trae"
+
 OPENCLAW_SETUP_DIR="$TESTDATA/setup_openclaw"
 mkdir -p "$OPENCLAW_SETUP_DIR"
 
