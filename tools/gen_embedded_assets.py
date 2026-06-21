@@ -48,6 +48,10 @@ ASSET_FILES = [
     "codebuddy/prime.sh",
     "codebuddy/user_prompt.sh",
     "codebuddy/stop.sh",
+    "workbuddy/SKILL.md",
+    "workbuddy/prime.sh",
+    "workbuddy/user_prompt.sh",
+    "workbuddy/stop.sh",
 ]
 
 
