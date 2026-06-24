@@ -1040,6 +1040,35 @@ step "setup --target bogus error mentions workbuddy"
 OUT=$($M --data-dir "$WORKBUDDY_SETUP_DIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions workbuddy" "$OUT" "workbuddy"
 
+KIMI_HOME="$TESTDATA/setup_kimi_home"
+mkdir -p "$KIMI_HOME"
+
+step "setup --target kimi --yes — accepted (native ~/.kimi-code via KIMI_CODE_HOME)"
+OUT=$(KIMI_CODE_HOME="$KIMI_HOME/.kimi-code" $M --data-dir "$KIMI_HOME/.mnemon-data" setup --target kimi --yes 2>&1 || true)
+assert_contains "kimi target accepted" "$OUT" "Skill"
+assert_contains "kimi output shows config.toml" "$OUT" "config.toml"
+KIMI_CONFIG="$KIMI_HOME/.kimi-code/config.toml"
+if [ -f "$KIMI_CONFIG" ]; then
+  KCFG="$(cat "$KIMI_CONFIG")"
+  assert_contains "kimi config has [[hooks]]" "$KCFG" "[[hooks]]"
+  assert_contains "kimi SessionStart event" "$KCFG" 'event = "SessionStart"'
+  assert_contains "kimi UserPromptSubmit event" "$KCFG" 'event = "UserPromptSubmit"'
+  assert_contains "kimi Stop event" "$KCFG" 'event = "Stop"'
+  assert_contains "kimi prime hook command" "$KCFG" "prime.sh"
+  assert_contains "kimi hook timeout" "$KCFG" "timeout = 10"
+  if [ -f "$KIMI_HOME/.kimi-code/skills/mnemon/SKILL.md" ]; then
+    pass "kimi skill written" ""
+  else
+    fail "kimi skill written" "missing SKILL.md"
+  fi
+else
+  fail "kimi config.toml written" "missing $KIMI_CONFIG"
+fi
+
+step "setup --target bogus error mentions kimi"
+OUT=$($M --data-dir "$KIMI_HOME/.mnemon-data" setup --target bogus 2>&1 || true)
+assert_contains "error mentions kimi" "$OUT" "kimi"
+
 OPENCLAW_SETUP_DIR="$TESTDATA/setup_openclaw"
 mkdir -p "$OPENCLAW_SETUP_DIR"
 

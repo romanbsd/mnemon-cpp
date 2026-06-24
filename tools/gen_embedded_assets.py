@@ -52,6 +52,10 @@ ASSET_FILES = [
     "workbuddy/prime.sh",
     "workbuddy/user_prompt.sh",
     "workbuddy/stop.sh",
+    "kimi/SKILL.md",
+    "kimi/prime.sh",
+    "kimi/user_prompt.sh",
+    "kimi/stop.sh",
 ]
 
 
