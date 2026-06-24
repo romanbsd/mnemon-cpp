@@ -203,7 +203,10 @@ static nlohmann::json read_json_file(const fs::path& path) {
 static void write_json_file(const fs::path& path, const nlohmann::json& j) {
   std::string b = j.dump(2);
   b.push_back('\n');
-  fs::create_directories(path.parent_path());
+  fs::path parent = path.parent_path();
+  if (!parent.empty()) {
+    fs::create_directories(parent);
+  }
   fs::path tmp = path;
   tmp += ".tmp";
   {
@@ -759,6 +762,55 @@ static Environment detect_kimi() {
   return env;
 }
 
+static fs::path opencode_config_path(const std::string& config_dir);
+
+static Environment detect_opencode(bool global) {
+  Environment env;
+  env.name = "opencode";
+  env.display = "OpenCode";
+  fs::path global_dir = fs::path(home_dir()) / ".config" / "opencode";
+  std::string config_dir = global ? global_dir.string() : std::string(".opencode");
+  if (global) {
+    if (const char* env_dir = std::getenv("OPENCODE_CONFIG_DIR")) {
+      std::string trimmed(env_dir);
+      size_t b = trimmed.find_first_not_of(" \t\r\n");
+      size_t e = trimmed.find_last_not_of(" \t\r\n");
+      trimmed = (b == std::string::npos) ? "" : trimmed.substr(b, e - b + 1);
+      if (!trimmed.empty()) {
+        config_dir = trimmed;
+      }
+    }
+  }
+  env.config_dir = config_dir;
+
+  std::string bin;
+  if (look_path("opencode", bin)) {
+    env.detected = true;
+    env.bin_path = bin;
+    env.version = exec_version(bin);
+  }
+  std::error_code ec;
+  if (fs::exists(global_dir, ec)) {
+    env.detected = true;
+  }
+  fs::path skill = fs::path(config_dir) / "skills" / "mnemon" / "SKILL.md";
+  fs::path plugin = fs::path(config_dir) / "plugins" / "mnemon.js";
+  if (fs::exists(skill, ec)) {
+    env.installed = true;
+  } else if (fs::exists(plugin, ec)) {
+    env.installed = true;
+  } else {
+    try {
+      nlohmann::json data = read_json_file(opencode_config_path(config_dir));
+      if (json_contains_mnemon(data)) {
+        env.installed = true;
+      }
+    } catch (...) {
+    }
+  }
+  return env;
+}
+
 static Environment detect_nanobot(bool global) {
   Environment env;
   env.name = "nanobot";
@@ -836,8 +888,8 @@ static Environment detect_hermes() {
 static std::vector<Environment> detect_environments(bool global) {
   return {detect_claude(global),     detect_codex(global),     detect_cursor(global),    detect_trae(global),
           detect_qoder(global),      detect_qoderwork(),       detect_codebuddy(global), detect_workbuddy(global),
-          detect_kimi(),             detect_openclaw(global),  detect_nanobot(global),   detect_pi(global),
-          detect_hermes()};
+          detect_kimi(),             detect_opencode(global),  detect_openclaw(global),  detect_nanobot(global),
+          detect_pi(global),         detect_hermes()};
 }
 
 // --- install pieces ---
@@ -3149,6 +3201,194 @@ static bool install_kimi(Environment env) {
   return true;
 }
 
+// --- opencode ---
+
+static fs::path opencode_config_path(const std::string& config_dir) {
+  fs::path cd(config_dir);
+  if (cd.lexically_normal().filename() == ".opencode") {
+    fs::path parent = cd.parent_path();
+    if (parent.empty() || parent == ".") {
+      return "opencode.json";
+    }
+    return parent / "opencode.json";
+  }
+  return cd / "opencode.json";
+}
+
+static bool is_opencode_mnemon_instruction(const std::string& s) {
+  return s.find("mnemon/prompt/guide.md") != std::string::npos ||
+         s.find(".mnemon/prompt/guide.md") != std::string::npos;
+}
+
+static void remove_opencode_instructions(nlohmann::json& data) {
+  if (!data.contains("instructions") || !data["instructions"].is_array()) {
+    return;
+  }
+  nlohmann::json filtered = nlohmann::json::array();
+  for (const auto& value : data["instructions"]) {
+    if (value.is_string() && is_opencode_mnemon_instruction(value.get<std::string>())) {
+      continue;
+    }
+    filtered.push_back(value);
+  }
+  if (filtered.empty()) {
+    data.erase("instructions");
+  } else {
+    data["instructions"] = filtered;
+  }
+}
+
+static void add_opencode_instruction(nlohmann::json& data, const std::string& guide_path) {
+  remove_opencode_instructions(data);
+  nlohmann::json instructions = nlohmann::json::array();
+  if (data.contains("instructions") && data["instructions"].is_array()) {
+    instructions = data["instructions"];
+  }
+  instructions.push_back(guide_path);
+  data["instructions"] = instructions;
+}
+
+static void remove_opencode_empty_schema(nlohmann::json& data) {
+  if (data.size() != 1) {
+    return;
+  }
+  auto it = data.find("$schema");
+  if (it != data.end() && it->is_string() && it->get<std::string>() == "https://opencode.ai/config.json") {
+    data.erase("$schema");
+  }
+}
+
+static fs::path opencode_write_skill(const std::string& config_dir) {
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  fs::create_directories(skill_dir);
+  fs::path p = skill_dir / "SKILL.md";
+  write_bytes(p, mnemon::embedded::opencode_SKILL_md(), 0644);
+  return p;
+}
+
+static fs::path opencode_write_plugin(const std::string& config_dir) {
+  fs::path plugin_dir = fs::path(config_dir) / "plugins";
+  fs::create_directories(plugin_dir);
+  fs::path p = plugin_dir / "mnemon.js";
+  write_bytes(p, mnemon::embedded::opencode_mnemon_js(), 0644);
+  return p;
+}
+
+static fs::path opencode_register_instructions(const std::string& config_dir, const std::string& prompt_dir) {
+  fs::path config_path = opencode_config_path(config_dir);
+  nlohmann::json data = read_json_file(config_path);
+  if (!data.contains("$schema")) {
+    data["$schema"] = "https://opencode.ai/config.json";
+  }
+  fs::path guide_path = fs::absolute(fs::path(prompt_dir) / "guide.md");
+  add_opencode_instruction(data, guide_path.string());
+  write_json_file(config_path, data);
+  return config_path;
+}
+
+static int opencode_eject(const std::string& config_dir) {
+  int errs = 0;
+  std::cout << "\nRemoving OpenCode integration (" << config_dir << ")...\n";
+
+  std::error_code ec;
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  fs::remove_all(skill_dir, ec);
+  if (ec) {
+    status_error("Skill", ec.message());
+    ++errs;
+  } else {
+    status_ok("Skill", skill_dir.string() + " removed");
+  }
+
+  ec.clear();
+  fs::path plugin_path = fs::path(config_dir) / "plugins" / "mnemon.js";
+  fs::remove_all(plugin_path, ec);
+  if (ec) {
+    status_error("Plugin", ec.message());
+    ++errs;
+  } else {
+    status_ok("Plugin", plugin_path.string() + " removed");
+  }
+
+  remove_if_empty_dir(fs::path(config_dir) / "skills");
+  remove_if_empty_dir(fs::path(config_dir) / "plugins");
+
+  fs::path config_path = opencode_config_path(config_dir);
+  try {
+    nlohmann::json data = read_json_file(config_path);
+    remove_opencode_instructions(data);
+    remove_opencode_empty_schema(data);
+    write_or_remove_json_file(config_path, data);
+    status_ok("Config", config_path.string() + " cleaned");
+  } catch (const std::exception& e) {
+    status_error("Config", e.what());
+    ++errs;
+  }
+
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
+static bool install_opencode(Environment env, bool global, bool setup_yes) {
+  std::string config_dir = env.config_dir;
+  if (!global && !setup_yes && is_tty_in()) {
+    std::string local_dir = ".opencode";
+    std::string global_dir = (fs::path(home_dir()) / ".config" / "opencode").string();
+    size_t idx = select_one("Install scope", {
+        "Local — this project only (" + local_dir + "/ + opencode.json)",
+        "Global — all projects (" + global_dir + "/)",
+    }, 0);
+    config_dir = (idx == 1) ? global_dir : local_dir;
+  }
+
+  std::cout << "\nSetting up OpenCode (" << config_dir << ")...\n";
+
+  std::cout << "\n[1/3] Skill\n";
+  try {
+    fs::path p = opencode_write_skill(config_dir);
+    status_ok("Skill", p.string());
+  } catch (const std::exception& e) {
+    status_error("Skill", e.what());
+    return false;
+  }
+
+  std::cout << "\n[2/3] Prompts\n";
+  std::string prompt_path;
+  try {
+    fs::path p = write_prompt_files();
+    status_ok("Prompts", p.string());
+    prompt_path = p.string();
+  } catch (const std::exception& e) {
+    status_error("Prompts", e.what());
+    return false;
+  }
+  try {
+    fs::path p = opencode_register_instructions(config_dir, prompt_path);
+    status_updated("Instructions", p.string());
+  } catch (const std::exception& e) {
+    status_error("Instructions", e.what());
+    return false;
+  }
+
+  std::cout << "\n[3/3] Plugin\n";
+  try {
+    fs::path p = opencode_write_plugin(config_dir);
+    status_ok("Plugin", p.string());
+  } catch (const std::exception& e) {
+    status_error("Plugin", e.what());
+    return false;
+  }
+
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill        " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Plugin       " << config_dir << "/plugins/mnemon.js\n";
+  std::cout << "  Instructions " << opencode_config_path(config_dir).string() << "\n";
+  std::cout << "  Prompts      " << prompt_path << "/ (guide.md, skill.md)\n\n";
+  std::cout << "Restart OpenCode to activate the mnemon skill, instructions, and plugin.\n";
+  std::cout << "Run 'mnemon setup --eject --target opencode' to remove.\n";
+  return true;
+}
+
 // --- install flows ---
 
 static HookSelection select_optional_hooks(bool setup_yes) {
@@ -3370,6 +3610,9 @@ static bool install_env(Environment* env, bool global, bool setup_yes, const Run
   if (env->name == "kimi") {
     return install_kimi(*env);
   }
+  if (env->name == "opencode") {
+    return install_opencode(*env, global, setup_yes);
+  }
   if (env->name == "openclaw") {
     return install_openclaw(*env, global, setup_yes, opt);
   }
@@ -3424,6 +3667,11 @@ static int eject_env(Environment* env, bool yes) {
   }
   if (env->name == "kimi") {
     int errs = kimi_eject(env->config_dir);
+    eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
+    return errs;
+  }
+  if (env->name == "opencode") {
+    int errs = opencode_eject(env->config_dir);
     eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
     return errs;
   }
@@ -3567,8 +3815,8 @@ static void run_eject_flow(const RunOptions& opt) {
 } // namespace
 
 void run(const RunOptions& opt) {
-  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "trae" && opt.target != "qoder" && opt.target != "qoderwork" && opt.target != "codebuddy" && opt.target != "workbuddy" && opt.target != "kimi" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
-    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, trae, qoder, qoderwork, codebuddy, workbuddy, kimi, openclaw, nanobot, pi, or hermes)");
+  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "trae" && opt.target != "qoder" && opt.target != "qoderwork" && opt.target != "codebuddy" && opt.target != "workbuddy" && opt.target != "kimi" && opt.target != "opencode" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
+    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, trae, qoder, qoderwork, codebuddy, workbuddy, kimi, opencode, openclaw, nanobot, pi, or hermes)");
   }
   if (opt.eject) {
     run_eject_flow(opt);

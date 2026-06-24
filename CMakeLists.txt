@@ -70,6 +70,8 @@ set(ASSET_DEPS
   "${ASSET_ROOT}/kimi/prime.sh"
   "${ASSET_ROOT}/kimi/user_prompt.sh"
   "${ASSET_ROOT}/kimi/stop.sh"
+  "${ASSET_ROOT}/opencode/SKILL.md"
+  "${ASSET_ROOT}/opencode/mnemon.js"
 )
 add_custom_command(
   OUTPUT ${EMBED_GEN_HPP} ${EMBED_GEN_CPP}
@@ -156,7 +158,19 @@ add_executable(mnemon
 target_include_directories(mnemon PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_include_directories(mnemon PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_include_directories(mnemon PRIVATE "${httplib_SOURCE_DIR}")
-target_compile_options(mnemon PRIVATE "-DMNEMON_VERSION_STR=\"${PROJECT_VERSION}\"")
+find_package(Git QUIET)
+set(MNEMON_VERSION "${PROJECT_VERSION}")
+if(Git_FOUND)
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" describe --tags --always --dirty
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE MNEMON_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+  )
+endif()
+
+target_compile_definitions(mnemon PRIVATE MNEMON_VERSION_STR="${MNEMON_VERSION}")
 target_link_libraries(mnemon PRIVATE CLI11::CLI11 nlohmann_json::nlohmann_json sqlite3 Threads::Threads)
 if(APPLE)
   target_link_libraries(mnemon PRIVATE "-framework Accelerate")

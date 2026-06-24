@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=132ea228b1df63e060c8f5b7b7aeac0944342e29
-last_sha_subject=Merge pull request #66 from mnemon-dev/feat/kimi-code-setup
-last_sha_date=2026-06-22T22:06:02+08:00
+last_sha=a1621605977f30337e137a79f8f0ee8c1bff1df4
+last_sha_subject=Merge pull request #67 from mnemon-dev/feat/opencode-setup
+last_sha_date=2026-06-24T00:18:54+08:00
