@@ -111,7 +111,7 @@ FetchContent_MakeAvailable(json)
 
 FetchContent_Declare(httplib
   GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-  GIT_TAG v0.47.0
+  GIT_TAG v0.48.0
 )
 FetchContent_MakeAvailable(httplib)
 
