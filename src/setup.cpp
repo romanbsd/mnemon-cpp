@@ -718,6 +718,47 @@ static Environment detect_workbuddy(bool global) {
   return env;
 }
 
+static Environment detect_kimi() {
+  Environment env;
+  env.name = "kimi";
+  env.display = "Kimi Code";
+  fs::path config_dir = fs::path(home_dir()) / ".kimi-code";
+  if (const char* env_home = std::getenv("KIMI_CODE_HOME")) {
+    std::string trimmed(env_home);
+    size_t b = trimmed.find_first_not_of(" \t\r\n");
+    size_t e = trimmed.find_last_not_of(" \t\r\n");
+    trimmed = (b == std::string::npos) ? "" : trimmed.substr(b, e - b + 1);
+    if (!trimmed.empty()) {
+      config_dir = trimmed;
+    }
+  }
+  env.config_dir = config_dir.string();
+
+  std::string bin;
+  if (look_path("kimi", bin)) {
+    env.detected = true;
+    env.bin_path = bin;
+    env.version = exec_version(bin);
+  }
+  std::error_code ec;
+  if (fs::exists(config_dir, ec)) {
+    env.detected = true;
+  }
+  fs::path skill = config_dir / "skills" / "mnemon" / "SKILL.md";
+  if (fs::exists(skill, ec)) {
+    env.installed = true;
+  } else {
+    std::ifstream in(config_dir / "config.toml");
+    if (in) {
+      std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      if (raw.find("mnemon") != std::string::npos) {
+        env.installed = true;
+      }
+    }
+  }
+  return env;
+}
+
 static Environment detect_nanobot(bool global) {
   Environment env;
   env.name = "nanobot";
@@ -795,7 +836,8 @@ static Environment detect_hermes() {
 static std::vector<Environment> detect_environments(bool global) {
   return {detect_claude(global),     detect_codex(global),     detect_cursor(global),    detect_trae(global),
           detect_qoder(global),      detect_qoderwork(),       detect_codebuddy(global), detect_workbuddy(global),
-          detect_openclaw(global),   detect_nanobot(global),   detect_pi(global),        detect_hermes()};
+          detect_kimi(),             detect_openclaw(global),  detect_nanobot(global),   detect_pi(global),
+          detect_hermes()};
 }
 
 // --- install pieces ---
@@ -2826,6 +2868,287 @@ static bool install_workbuddy(Environment env, bool global, bool setup_yes) {
   return true;
 }
 
+// --- kimi ---
+
+// toml_quote mirrors Go's fmt %q for the ASCII paths/strings used in hook blocks.
+static std::string toml_quote(const std::string& s) {
+  std::string out = "\"";
+  for (char c : s) {
+    if (c == '\\' || c == '"') {
+      out.push_back('\\');
+    }
+    out.push_back(c);
+  }
+  out.push_back('"');
+  return out;
+}
+
+static std::string kimi_hook_block(const std::string& event, const std::string& command) {
+  // matcher is always empty for mnemon's three lifecycle hooks.
+  return "[[hooks]]\nevent = " + toml_quote(event) + "\ncommand = " + toml_quote(command) + "\ntimeout = 10";
+}
+
+static std::string collapse_excess_blank_lines(const std::string& s) {
+  std::vector<std::string> lines;
+  size_t pos = 0;
+  while (true) {
+    size_t nl = s.find('\n', pos);
+    if (nl == std::string::npos) {
+      lines.push_back(s.substr(pos));
+      break;
+    }
+    lines.push_back(s.substr(pos, nl - pos));
+    pos = nl + 1;
+  }
+  std::vector<std::string> out;
+  int blank = 0;
+  for (const auto& line : lines) {
+    bool is_blank = line.find_first_not_of(" \t\r") == std::string::npos;
+    if (is_blank) {
+      ++blank;
+      if (blank > 2) {
+        continue;
+      }
+    } else {
+      blank = 0;
+    }
+    out.push_back(line);
+  }
+  std::string joined;
+  for (size_t i = 0; i < out.size(); ++i) {
+    if (i) {
+      joined.push_back('\n');
+    }
+    joined += out[i];
+  }
+  size_t end = joined.find_last_not_of('\n');
+  joined = (end == std::string::npos) ? "" : joined.substr(0, end + 1);
+  return joined + "\n";
+}
+
+static bool only_whitespace(const std::string& s) {
+  return s.find_first_not_of(" \t\r\n") == std::string::npos;
+}
+
+static std::string remove_kimi_hooks(const std::string& config) {
+  if (only_whitespace(config)) {
+    return "";
+  }
+  // SplitAfter: keep the trailing '\n' on each line.
+  std::vector<std::string> lines;
+  size_t pos = 0;
+  while (pos < config.size()) {
+    size_t nl = config.find('\n', pos);
+    if (nl == std::string::npos) {
+      lines.push_back(config.substr(pos));
+      break;
+    }
+    lines.push_back(config.substr(pos, nl - pos + 1));
+    pos = nl + 1;
+  }
+
+  auto trim_line = [](const std::string& l) {
+    std::string t = l;
+    if (!t.empty() && t.back() == '\n') {
+      t.pop_back();
+    }
+    size_t b = t.find_first_not_of(" \t\r\n");
+    size_t e = t.find_last_not_of(" \t\r\n");
+    return (b == std::string::npos) ? std::string() : t.substr(b, e - b + 1);
+  };
+
+  std::string out;
+  for (size_t i = 0; i < lines.size();) {
+    if (trim_line(lines[i]) != "[[hooks]]") {
+      out += lines[i];
+      ++i;
+      continue;
+    }
+    size_t start = i;
+    ++i;
+    for (; i < lines.size(); ++i) {
+      std::string next = trim_line(lines[i]);
+      if (!next.empty() && next[0] == '[') {
+        break;
+      }
+    }
+    std::string block;
+    for (size_t j = start; j < i; ++j) {
+      block += lines[j];
+    }
+    if (block.find("mnemon") != std::string::npos) {
+      continue;
+    }
+    out += block;
+  }
+  return collapse_excess_blank_lines(out);
+}
+
+static std::string add_kimi_hooks(const std::string& config, const std::string& hooks_dir) {
+  std::string cleaned = remove_kimi_hooks(config);
+  size_t end = cleaned.find_last_not_of('\n');
+  cleaned = (end == std::string::npos) ? "" : cleaned.substr(0, end + 1);
+
+  fs::path hd = hooks_dir;
+  std::string blocks = kimi_hook_block("SessionStart", (hd / "prime.sh").string()) + "\n\n" +
+                       kimi_hook_block("UserPromptSubmit", (hd / "user_prompt.sh").string()) + "\n\n" +
+                       kimi_hook_block("Stop", (hd / "stop.sh").string());
+  if (cleaned.empty()) {
+    return blocks + "\n";
+  }
+  return cleaned + "\n\n" + blocks + "\n";
+}
+
+static fs::path kimi_write_skill(const std::string& config_dir) {
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  fs::create_directories(skill_dir);
+  fs::path p = skill_dir / "SKILL.md";
+  write_bytes(p, mnemon::embedded::kimi_SKILL_md(), 0644);
+  return p;
+}
+
+static fs::path kimi_write_hook(const std::string& config_dir, const std::string& filename,
+                                std::string_view content) {
+  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
+  write_bytes(hook_path, content, 0755);
+  return hook_path;
+}
+
+static fs::path kimi_register_hooks(const std::string& config_dir) {
+  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
+  fs::path config_path = fs::path(config_dir) / "config.toml";
+
+  std::string data;
+  {
+    std::ifstream in(config_path);
+    if (in) {
+      data.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+  }
+  std::string updated = add_kimi_hooks(data, abs_hooks_dir.string());
+  fs::create_directories(config_dir);
+  write_bytes(config_path, updated, 0644);
+  return config_path;
+}
+
+static int kimi_eject(const std::string& config_dir) {
+  int errs = 0;
+  std::cout << "\nRemoving Kimi Code integration (" << config_dir << ")...\n";
+
+  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  std::error_code ec;
+  fs::remove_all(hooks_dir, ec);
+  if (ec) {
+    status_error("Hooks", ec.message());
+    ++errs;
+  } else {
+    status_ok("Hooks", hooks_dir.string() + " removed");
+  }
+  remove_if_empty_dir(fs::path(config_dir) / "hooks");
+
+  fs::path config_path = fs::path(config_dir) / "config.toml";
+  std::error_code exists_ec;
+  if (fs::exists(config_path, exists_ec)) {
+    std::ifstream in(config_path);
+    std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    std::string cleaned = remove_kimi_hooks(data);
+    if (only_whitespace(cleaned)) {
+      fs::remove(config_path, ec);
+      if (ec) {
+        status_error("Config", ec.message());
+        ++errs;
+      } else {
+        status_ok("Config", config_path.string() + " removed");
+      }
+    } else {
+      try {
+        write_bytes(config_path, cleaned, 0644);
+        status_ok("Config", config_path.string() + " cleaned");
+      } catch (const std::exception& e) {
+        status_error("Config", e.what());
+        ++errs;
+      }
+    }
+  }
+
+  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
+  ec.clear();
+  fs::remove_all(skill_dir, ec);
+  if (ec) {
+    status_error("Skill", ec.message());
+    ++errs;
+  } else {
+    status_ok("Skill", skill_dir.string() + " removed");
+  }
+  remove_if_empty_dir(fs::path(config_dir) / "skills");
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
+static bool install_kimi(Environment env) {
+  std::string config_dir = env.config_dir;
+
+  std::cout << "\nSetting up Kimi Code (" << config_dir << ")...\n";
+
+  std::cout << "\n[1/3] Skill\n";
+  try {
+    fs::path p = kimi_write_skill(config_dir);
+    status_ok("Skill", p.string());
+  } catch (const std::exception& e) {
+    status_error("Skill", e.what());
+    return false;
+  }
+
+  std::cout << "\n[2/3] Prompts\n";
+  std::string prompt_path;
+  try {
+    fs::path p = write_prompt_files();
+    status_ok("Prompts", p.string());
+    prompt_path = p.string();
+  } catch (const std::exception& e) {
+    status_error("Prompts", e.what());
+    return false;
+  }
+
+  std::cout << "\n[3/3] Hooks\n";
+  struct HookFile {
+    const char* label;
+    const char* filename;
+    std::string_view content;
+  };
+  HookFile hook_files[] = {
+      {"Hook: prime", "prime.sh", mnemon::embedded::kimi_prime_sh()},
+      {"Hook: remind", "user_prompt.sh", mnemon::embedded::kimi_user_prompt_sh()},
+      {"Hook: nudge", "stop.sh", mnemon::embedded::kimi_stop_sh()},
+  };
+  for (const auto& hf : hook_files) {
+    try {
+      fs::path p = kimi_write_hook(config_dir, hf.filename, hf.content);
+      status_ok(hf.label, p.string());
+    } catch (const std::exception& e) {
+      status_error(hf.label, e.what());
+      return false;
+    }
+  }
+  try {
+    fs::path p = kimi_register_hooks(config_dir);
+    status_updated("Config", p.string());
+  } catch (const std::exception& e) {
+    status_error("Config", e.what());
+    return false;
+  }
+
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill    " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Hooks    " << config_dir << "/config.toml (SessionStart, UserPromptSubmit, Stop)\n";
+  std::cout << "  Prompts  " << prompt_path << "/ (guide.md, skill.md)\n\n";
+  std::cout << "Restart Kimi Code to activate the mnemon skill and hooks.\n";
+  std::cout << "Run 'mnemon setup --eject --target kimi' to remove.\n";
+  return true;
+}
+
 // --- install flows ---
 
 static HookSelection select_optional_hooks(bool setup_yes) {
@@ -3044,6 +3367,9 @@ static bool install_env(Environment* env, bool global, bool setup_yes, const Run
   if (env->name == "workbuddy") {
     return install_workbuddy(*env, global, setup_yes);
   }
+  if (env->name == "kimi") {
+    return install_kimi(*env);
+  }
   if (env->name == "openclaw") {
     return install_openclaw(*env, global, setup_yes, opt);
   }
@@ -3093,6 +3419,11 @@ static int eject_env(Environment* env, bool yes) {
   }
   if (env->name == "workbuddy") {
     int errs = workbuddy_eject(env->config_dir);
+    eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
+    return errs;
+  }
+  if (env->name == "kimi") {
+    int errs = kimi_eject(env->config_dir);
     eject_markdown("AGENTS.md", "Remove memory guidance from ./AGENTS.md?", yes);
     return errs;
   }
@@ -3236,8 +3567,8 @@ static void run_eject_flow(const RunOptions& opt) {
 } // namespace
 
 void run(const RunOptions& opt) {
-  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "trae" && opt.target != "qoder" && opt.target != "qoderwork" && opt.target != "codebuddy" && opt.target != "workbuddy" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
-    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, trae, qoder, qoderwork, codebuddy, workbuddy, openclaw, nanobot, pi, or hermes)");
+  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "trae" && opt.target != "qoder" && opt.target != "qoderwork" && opt.target != "codebuddy" && opt.target != "workbuddy" && opt.target != "kimi" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
+    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, trae, qoder, qoderwork, codebuddy, workbuddy, kimi, openclaw, nanobot, pi, or hermes)");
   }
   if (opt.eject) {
     run_eject_flow(opt);

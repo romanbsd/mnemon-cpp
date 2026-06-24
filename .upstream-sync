@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=50f9e49cea3cf62609705be250657f5a8d96c910
-last_sha_subject=feat(setup): add WorkBuddy integration (#65)
-last_sha_date=2026-06-21T01:24:38+08:00
+last_sha=132ea228b1df63e060c8f5b7b7aeac0944342e29
+last_sha_subject=Merge pull request #66 from mnemon-dev/feat/kimi-code-setup
+last_sha_date=2026-06-22T22:06:02+08:00

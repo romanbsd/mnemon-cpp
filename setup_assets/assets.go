@@ -95,6 +95,18 @@ var WorkBuddyUserPromptHook []byte
 //go:embed workbuddy/stop.sh
 var WorkBuddyStopHook []byte
 
+//go:embed kimi/SKILL.md
+var KimiSkill []byte
+
+//go:embed kimi/prime.sh
+var KimiPrimeHook []byte
+
+//go:embed kimi/user_prompt.sh
+var KimiUserPromptHook []byte
+
+//go:embed kimi/stop.sh
+var KimiStopHook []byte
+
 //go:embed openclaw/SKILL.md
 var OpenClawSkill []byte
 
@@ -145,5 +157,5 @@ var HermesCompactHook []byte
 
 // All returns the embedded filesystem for inspection.
 //
-//go:embed claude codex cursor trae qoder qoderwork codebuddy workbuddy openclaw nanoclaw nanobot pi hermes
+//go:embed claude codex cursor trae qoder qoderwork codebuddy workbuddy kimi openclaw nanoclaw nanobot pi hermes
 var All embed.FS
