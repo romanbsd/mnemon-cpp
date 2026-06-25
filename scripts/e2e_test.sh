@@ -1069,6 +1069,45 @@ step "setup --target bogus error mentions kimi"
 OUT=$($M --data-dir "$KIMI_HOME/.mnemon-data" setup --target bogus 2>&1 || true)
 assert_contains "error mentions kimi" "$OUT" "kimi"
 
+OPENCODE_SETUP_DIR="$TESTDATA/setup_opencode"
+mkdir -p "$OPENCODE_SETUP_DIR"
+
+step "setup --target opencode --yes — accepted (installs skill + plugin + opencode.json)"
+OUT=$(cd "$OPENCODE_SETUP_DIR" && $M --data-dir "$OPENCODE_SETUP_DIR" setup --target opencode --yes 2>&1 || true)
+assert_contains "opencode target accepted" "$OUT" "Skill"
+assert_contains "opencode output shows plugin" "$OUT" "Plugin"
+if [ -f "$OPENCODE_SETUP_DIR/.opencode/skills/mnemon/SKILL.md" ]; then
+  pass "opencode skill written" ""
+else
+  fail "opencode skill written" "missing SKILL.md"
+fi
+if [ -f "$OPENCODE_SETUP_DIR/.opencode/plugins/mnemon.js" ]; then
+  pass "opencode plugin written" ""
+else
+  fail "opencode plugin written" "missing plugins/mnemon.js"
+fi
+OPENCODE_CONFIG="$OPENCODE_SETUP_DIR/opencode.json"
+if [ -f "$OPENCODE_CONFIG" ]; then
+  OCJSON="$(cat "$OPENCODE_CONFIG")"
+  assert_jq "opencode schema set" "$OCJSON" '.["$schema"]' 'https://opencode.ai/config.json'
+  assert_jq "opencode instruction registered" "$OCJSON" '.instructions[0] | endswith("guide.md")' true
+else
+  fail "opencode.json written" "missing $OPENCODE_CONFIG"
+fi
+
+step "setup --eject --target opencode --yes — removes mnemon files"
+OUT=$(cd "$OPENCODE_SETUP_DIR" && $M --data-dir "$OPENCODE_SETUP_DIR" setup --eject --target opencode --yes 2>&1 || true)
+assert_contains "opencode eject ran" "$OUT" "Removing OpenCode integration"
+if [ -f "$OPENCODE_SETUP_DIR/.opencode/plugins/mnemon.js" ]; then
+  fail "opencode plugin removed" "plugins/mnemon.js still present"
+else
+  pass "opencode plugin removed" ""
+fi
+
+step "setup --target bogus error mentions opencode"
+OUT=$($M --data-dir "$OPENCODE_SETUP_DIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions opencode" "$OUT" "opencode"
+
 OPENCLAW_SETUP_DIR="$TESTDATA/setup_openclaw"
 mkdir -p "$OPENCLAW_SETUP_DIR"
 

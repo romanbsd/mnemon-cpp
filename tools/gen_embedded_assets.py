@@ -56,6 +56,8 @@ ASSET_FILES = [
     "kimi/prime.sh",
     "kimi/user_prompt.sh",
     "kimi/stop.sh",
+    "opencode/SKILL.md",
+    "opencode/mnemon.js",
 ]
 
 
