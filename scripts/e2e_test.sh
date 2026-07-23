@@ -1234,6 +1234,15 @@ case "$PRIME_CMD3" in
   *)  fail "symlinked \$HOME: SessionStart command is absolute" "(expected absolute path, got: $PRIME_CMD3)" ;;
 esac
 
+step "claude Stop hook keeps memory sub-agents as leaf writers (5d2e9c34)"
+CLAUDE_LEAF="$TESTDATA/claude_leaf_writer"
+rm -rf "$CLAUDE_LEAF" && mkdir -p "$CLAUDE_LEAF"
+(cd "$CLAUDE_LEAF" && HOME="$CLAUDE_LEAF" CLAUDE_CONFIG_DIR= $M --data-dir "$CLAUDE_LEAF/.mnemon-data" setup --target claude-code --yes > /dev/null 2>&1 || true)
+CLAUDE_STOP=$(cat "$CLAUDE_LEAF/.claude/hooks/mnemon/stop.sh" 2>/dev/null)
+assert_contains "claude Stop branches on SubagentStop" "$CLAUDE_STOP" '"hook_event_name"'
+assert_contains "claude Stop SubagentStop matcher" "$CLAUDE_STOP" 'SubagentStop'
+assert_contains "claude Stop leaf-writer guidance" "$CLAUDE_STOP" 'do not spawn another sub-agent'
+
 # ══════════════════════════════════════════════════════════════════════
 banner "Embeddings: one-time float64 → float32 storage migration"
 # ══════════════════════════════════════════════════════════════════════
