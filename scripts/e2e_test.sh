@@ -1454,6 +1454,17 @@ assert_contains "hermes skill path in output" "$OUT" "skills/mnemon/SKILL.md"
 step "hermes output shows hooks path"
 assert_contains "hermes hooks path in output" "$OUT" "config.yaml"
 
+step "hermes hooks decode IO as utf-8 (38e2b40a)"
+HERMES_HOME_DIR="$TESTDATA/setup_hermes_home"
+mkdir -p "$HERMES_HOME_DIR"
+HOME="$HERMES_HOME_DIR" $M --data-dir "$HERMES_HOME_DIR/.mnemon-data" setup --target hermes --yes > /dev/null 2>&1 || true
+HERMES_REMIND=$(cat "$HERMES_HOME_DIR/.hermes/agent-hooks/mnemon/remind.sh" 2>/dev/null)
+HERMES_NUDGE=$(cat "$HERMES_HOME_DIR/.hermes/agent-hooks/mnemon/nudge.sh" 2>/dev/null)
+assert_contains "hermes remind reads payload utf-8" "$HERMES_REMIND" 'payload_path.read_text(encoding="utf-8")'
+assert_contains "hermes remind reads state utf-8" "$HERMES_REMIND" 'path.read_text(encoding="utf-8").strip()'
+assert_contains "hermes remind recall errors replace" "$HERMES_REMIND" 'errors="replace"'
+assert_contains "hermes nudge reads payload utf-8" "$HERMES_NUDGE" 'read_text(encoding="utf-8")'
+
 step "setup --target bogus error mentions hermes"
 OUT=$($M --data-dir "$HERMES_SETUP_DIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions hermes" "$OUT" "hermes"
