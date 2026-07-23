@@ -377,6 +377,44 @@ assert_jq "empty array" "$OUT" 'length' '0'
 
 
 # ══════════════════════════════════════════════════════════════════════
+banner "Diff safety: CONFLICT and cosine-only UPDATE never destroy memories (e71f4241)"
+# ══════════════════════════════════════════════════════════════════════
+# Upstream fix: a CONFLICT must keep both memories (the caller decides), and an
+# UPDATE only auto-replaces when the top match overlaps heavily by TOKENS
+# (>=0.6). Token similarity is the only signal here (no embeddings in E2E).
+
+step "CONFLICT keeps both memories (added, no soft-delete)"
+DIFFDIR="$TESTDATA/diff_conflict"
+mkdir -p "$DIFFDIR"
+$M --data-dir "$DIFFDIR" remember --no-diff "the auth login service no longer uses Redis backend cache" --cat fact > /dev/null
+OUT=$($M --data-dir "$DIFFDIR" remember "the auth login service no longer uses Memcached backend cache" --cat fact)
+show_json "$OUT" 12
+assert_jq "conflict suggestion surfaced" "$OUT" '.diff_suggestion' 'CONFLICT'
+assert_jq "conflict does not replace"    "$OUT" '.action' 'added'
+assert_jq "both memories kept"           "$($M --data-dir "$DIFFDIR" status)" '.total_insights' '2'
+
+step "UPDATE with token overlap >=0.6 replaces (updated)"
+DIFFDIR2="$TESTDATA/diff_update_token"
+mkdir -p "$DIFFDIR2"
+$M --data-dir "$DIFFDIR2" remember --no-diff "Go service uses PostgreSQL database storage" --cat fact > /dev/null
+OUT=$($M --data-dir "$DIFFDIR2" remember "Go service uses SQLite database storage" --cat fact)
+show_json "$OUT" 12
+assert_jq "update suggestion surfaced" "$OUT" '.diff_suggestion' 'UPDATE'
+assert_jq "high token overlap replaces" "$OUT" '.action' 'updated'
+assert_jq "old memory soft-deleted"    "$($M --data-dir "$DIFFDIR2" status)" '.total_insights' '1'
+
+step "UPDATE with token overlap <0.6 is added, not replaced (cosine-only guard)"
+DIFFDIR3="$TESTDATA/diff_update_lowtoken"
+mkdir -p "$DIFFDIR3"
+$M --data-dir "$DIFFDIR3" remember --no-diff "alpha bravo charlie delta echo foxtrot golf" --cat fact > /dev/null
+OUT=$($M --data-dir "$DIFFDIR3" remember "alpha bravo charlie delta echo hotel india" --cat fact)
+show_json "$OUT" 12
+assert_jq "update suggestion surfaced"   "$OUT" '.diff_suggestion' 'UPDATE'
+assert_jq "weak token overlap does not replace" "$OUT" '.action' 'added'
+assert_jq "both memories kept"           "$($M --data-dir "$DIFFDIR3" status)" '.total_insights' '2'
+
+
+# ══════════════════════════════════════════════════════════════════════
 banner "Milestone 4: Intent-Aware Smart Recall"
 # ══════════════════════════════════════════════════════════════════════
 

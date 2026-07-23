@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=5d2e9c3438c1512e3d442e9e91eb4c41437cd3f8
-last_sha_subject=fix(setup): keep Claude memory subagents as leaf writers
-last_sha_date=2026-07-03T20:05:16+08:00
+last_sha=39a175e9fd9749832805c0f2750ffe2fb2bdbc00
+last_sha_subject=Merge pull request #84 from astrologist/fix/diff-conflict-clobber
+last_sha_date=2026-07-19T19:09:10+08:00
