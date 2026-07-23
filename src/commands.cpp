@@ -441,11 +441,23 @@ int run_mnemon(int argc, char** argv) {
         if (!dres.matches.empty()) {
           replaced_id = dres.matches[0].id;
         }
-      } else if (dres.suggestion == mnemon::search_engine::DiffSuggestion::Conflict ||
-                 dres.suggestion == mnemon::search_engine::DiffSuggestion::Update) {
-        diff_action = "updated";
-        if (!dres.matches.empty()) {
+      } else if (dres.suggestion == mnemon::search_engine::DiffSuggestion::Conflict) {
+        // A CONFLICT means the two texts appear to disagree. Silently
+        // soft-deleting one side is destructive and has repeatedly clobbered
+        // unrelated same-domain memories (long technical notes share vocabulary
+        // at >=0.7 similarity, and change-log words like "replaced"/"no longer"
+        // appear in almost all of them). Keep both; the caller sees
+        // diff_suggestion=CONFLICT and can merge or delete deliberately.
+        diff_action = "added";
+      } else if (dres.suggestion == mnemon::search_engine::DiffSuggestion::Update) {
+        // Only auto-replace when the texts overlap heavily by TOKENS. Cosine
+        // similarity alone (same-domain embeddings cluster at 0.85+) is not
+        // enough evidence to destroy an existing memory.
+        if (!dres.matches.empty() && dres.matches[0].token_similarity >= 0.6) {
+          diff_action = "updated";
           replaced_id = dres.matches[0].id;
+        } else {
+          diff_action = "added";
         }
       }
     }

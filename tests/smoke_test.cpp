@@ -99,6 +99,51 @@ TEST_CASE("diff: 'no longer' still triggers CONFLICT at high similarity") {
   REQUIRE(res.suggestion == DiffSuggestion::Conflict);
 }
 
+// --- token-verbatim duplicate beats negation scan ---
+
+TEST_CASE("diff: near-verbatim restatement with negation word is DUPLICATE not CONFLICT") {
+  // A text can no longer "conflict" with a copy of itself: token similarity > 0.9
+  // (measured before the negation scan) means DUPLICATE regardless of vocabulary.
+  Insight base;
+  base.id      = "prev";
+  base.content = "Redis is no longer used for the caching layer in production";
+
+  auto res = diff_insights(
+      {base},
+      "Redis is no longer used for the caching layer in production",
+      DiffOptions{});
+
+  REQUIRE(res.suggestion == DiffSuggestion::Duplicate);
+}
+
+// --- extension never DUPLICATE (would silently drop new content) ---
+
+TEST_CASE("diff: cosine-hoisted superset extension is not DUPLICATE") {
+  // New text >25% longer than the match carries additional information; a
+  // DUPLICATE classification would skip it and silently drop that content,
+  // even when embeddings cluster the two above 0.9 cosine.
+  Insight base;
+  base.id      = "cache";
+  base.content = "redis caching layer";
+
+  std::vector<float> new_vec = {1.0f, 0.0f};
+  std::vector<float> old_vec = {0.95f, 0.3122f}; // cos(new, old) ≈ 0.95
+
+  DiffOptions opts;
+  opts.limit         = 5;
+  opts.new_embedding = new_vec;
+  opts.existing_embed.push_back({"cache", old_vec});
+
+  auto res = diff_insights(
+      {base},
+      "redis caching layer plus an appended clarification about eviction "
+      "policies, ttl configuration, and cluster failover behaviour",
+      opts);
+
+  REQUIRE(res.suggestion != DiffSuggestion::Duplicate);
+  REQUIRE(res.suggestion == DiffSuggestion::Update);
+}
+
 // --- sort matches by similarity ---
 
 TEST_CASE("diff: sort by similarity — UPDATE not masked by lower-Jaccard ADD candidate") {

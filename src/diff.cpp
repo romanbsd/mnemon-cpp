@@ -24,10 +24,24 @@ static const char* kNeg[] = {
 };
 
 // Thresholds: low sim → ADD; negation → CONFLICT; very high → DUPLICATE; else UPDATE.
-static DiffSuggestion classify_suggestion(double similarity, std::string_view new_text, std::string_view old_text) {
+static DiffSuggestion classify_suggestion(double token_sim, double similarity, std::string_view new_text,
+                                          std::string_view old_text) {
   if (similarity < 0.5) {
     return DiffSuggestion::Add;
   }
+
+  // isExtension: the new text is meaningfully longer than the existing one,
+  // i.e. it carries additional information. An extension must never be
+  // classified DUPLICATE — a skip would silently drop the new content.
+  bool is_extension = new_text.size() > old_text.size() + old_text.size() / 4;
+
+  // Near-verbatim re-statement measured by TOKENS (not just embeddings) is a
+  // duplicate no matter what vocabulary it contains. Checked before the
+  // negation scan so a text can never "conflict" with a copy of itself.
+  if (token_sim > 0.9 && !is_extension) {
+    return DiffSuggestion::Duplicate;
+  }
+
   // Only check conflict signals when texts are substantially similar.
   // At borderline similarity (0.5–0.7) texts may share domain vocabulary
   // without being about the same subject.
@@ -46,7 +60,7 @@ static DiffSuggestion classify_suggestion(double similarity, std::string_view ne
       }
     }
   }
-  if (similarity > 0.9) {
+  if (similarity > 0.9 && !is_extension) {
     return DiffSuggestion::Duplicate;
   }
   return DiffSuggestion::Update;
@@ -104,7 +118,7 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
     if (cosine_sim >= 0.85 && cosine_sim > similarity) {
       similarity = cosine_sim;
     }
-    auto sug = classify_suggestion(similarity, new_content, c.insight.content);
+    auto sug = classify_suggestion(token_sim, similarity, new_content, c.insight.content);
     matches.push_back(DiffMatch{c.insight.id, c.insight.content, token_sim, cosine_sim, similarity, sug});
   }
 
@@ -156,7 +170,7 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
       if (cp.sim >= 0.85 && cp.sim > similarity) {
         similarity = cp.sim;
       }
-      auto sug = classify_suggestion(similarity, new_content, ins.content);
+      auto sug = classify_suggestion(token_sim, similarity, new_content, ins.content);
       if (sug != DiffSuggestion::Add) {
         matches.push_back(DiffMatch{ins.id, ins.content, token_sim, cp.sim, similarity, sug});
       }
