@@ -181,17 +181,20 @@ if(BUILD_TESTING)
   enable_testing()
   add_executable(cpp_tests
     tests/smoke_test.cpp
+    tests/ollama_test.cpp
     tests/yaml_lite_test.cpp
     src/diff.cpp
     src/tokenize.cpp
     src/keyword.cpp
     src/vector_math.cpp
     src/model.cpp
+    src/ollama.cpp
     src/uuid.cpp
     src/yaml_lite.cpp
   )
   target_include_directories(cpp_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-  target_link_libraries(cpp_tests PRIVATE Catch2::Catch2WithMain)
+  target_include_directories(cpp_tests PRIVATE "${httplib_SOURCE_DIR}")
+  target_link_libraries(cpp_tests PRIVATE Catch2::Catch2WithMain nlohmann_json::nlohmann_json Threads::Threads)
   if(APPLE)
     target_link_libraries(cpp_tests PRIVATE "-framework Accelerate")
   endif()
