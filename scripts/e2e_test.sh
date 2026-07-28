@@ -81,6 +81,14 @@ assert_not_contains() {
   fi
 }
 
+assert_not_exists() {
+  if [ -e "$2" ]; then
+    fail "$1" "(still exists: $2)"
+  else
+    pass "$1" "(removed: $2)"
+  fi
+}
+
 # assert_jq LABEL JSON JQ_FILTER EXPECTED
 # e.g. assert_jq "total is 1" "$OUT" '.total_insights' '1'
 assert_jq() {
@@ -247,12 +255,13 @@ banner "Milestone 1: Basic CRUD"
 # ══════════════════════════════════════════════════════════════════════
 
 step "remember — store insight with tags"
-OUT=$($M --data-dir "$TESTDIR" remember --no-diff "User prefers Qdrant for vector DB" --cat preference --imp 4 --tags "tool,db")
+OUT=$($M --data-dir "$TESTDIR" remember --no-diff "User prefers Qdrant for vector DB" --cat preference --imp 4 --tags " tool , db ")
 show_json "$OUT" 20
 ID1=$(extract_id "$OUT")
 assert_jq "category is preference" "$OUT" '.category' 'preference'
 assert_jq "importance is 4"        "$OUT" '.importance' '4'
 assert_contains "tags include tool" "$OUT" '"tool"'
+assert_contains "tags include db" "$OUT" '"db"'
 assert_contains "entities has Qdrant" "$OUT" '"Qdrant"'
 
 step "recall — keyword search (compact default)"
@@ -1078,11 +1087,44 @@ step "setup --target bogus error mentions workbuddy"
 OUT=$($M --data-dir "$WORKBUDDY_SETUP_DIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions workbuddy" "$OUT" "workbuddy"
 
+step "setup eject shared JSON cleanup — removes generated Cursor files"
+OUT=$(cd "$CURSOR_SETUP_DIR" && $M --data-dir "$CURSOR_SETUP_DIR" setup --eject --target cursor --yes 2>&1 || true)
+assert_contains "cursor eject ran" "$OUT" "Removing Cursor integration"
+assert_not_exists "cursor hooks config removed" "$CURSOR_HOOKS"
+assert_not_exists "cursor skill removed" "$CURSOR_SETUP_DIR/.cursor/skills/mnemon/SKILL.md"
+
+step "setup eject shared JSON cleanup — preserves unrelated Trae hooks"
+TRAE_TMP="$TRAE_HOOKS.tmp"
+jq '.hooks.SessionStart += [{"hooks":[{"type":"command","command":"/tmp/unrelated.sh"}]}]' "$TRAE_HOOKS" > "$TRAE_TMP"
+mv "$TRAE_TMP" "$TRAE_HOOKS"
+OUT=$(cd "$TRAE_SETUP_DIR" && $M --data-dir "$TRAE_SETUP_DIR" setup --eject --target trae --yes 2>&1 || true)
+assert_contains "trae eject ran" "$OUT" "Removing Trae integration"
+if [ -f "$TRAE_HOOKS" ]; then
+  THJSON="$(cat "$TRAE_HOOKS")"
+  assert_jq "trae unrelated hook preserved" "$THJSON" '.hooks.SessionStart[0].hooks[0].command' '/tmp/unrelated.sh'
+  assert_not_contains "trae mnemon hooks removed" "$THJSON" "hooks/mnemon"
+else
+  fail "trae unrelated hook preserved" "missing $TRAE_HOOKS"
+fi
+assert_not_exists "trae skill removed" "$TRAE_SETUP_DIR/.trae/skills/mnemon/SKILL.md"
+
+step "setup eject shared JSON cleanup — removes generated Qoder files"
+OUT=$(cd "$QODER_SETUP_DIR" && $M --data-dir "$QODER_SETUP_DIR" setup --eject --target qoder --yes 2>&1 || true)
+assert_contains "qoder eject ran" "$OUT" "Removing Qoder integration"
+assert_not_exists "qoder settings removed" "$QODER_SETTINGS"
+assert_not_exists "qoder skill removed" "$QODER_SETUP_DIR/.qoder/skills/mnemon/SKILL.md"
+
+step "setup eject shared JSON cleanup — removes generated CodeBuddy files"
+OUT=$(cd "$CODEBUDDY_SETUP_DIR" && $M --data-dir "$CODEBUDDY_SETUP_DIR" setup --eject --target codebuddy --yes 2>&1 || true)
+assert_contains "codebuddy eject ran" "$OUT" "Removing CodeBuddy integration"
+assert_not_exists "codebuddy settings removed" "$CODEBUDDY_SETTINGS"
+assert_not_exists "codebuddy skill removed" "$CODEBUDDY_SETUP_DIR/.codebuddy/skills/mnemon/SKILL.md"
+
 KIMI_HOME="$TESTDATA/setup_kimi_home"
 mkdir -p "$KIMI_HOME"
 
-step "setup --target kimi --yes — accepted (native ~/.kimi-code via KIMI_CODE_HOME)"
-OUT=$(KIMI_CODE_HOME="$KIMI_HOME/.kimi-code" $M --data-dir "$KIMI_HOME/.mnemon-data" setup --target kimi --yes 2>&1 || true)
+step "setup --target kimi --yes — trims KIMI_CODE_HOME and installs native config"
+OUT=$(KIMI_CODE_HOME="  $KIMI_HOME/.kimi-code  " $M --data-dir "$KIMI_HOME/.mnemon-data" setup --target kimi --yes 2>&1 || true)
 assert_contains "kimi target accepted" "$OUT" "Skill"
 assert_contains "kimi output shows config.toml" "$OUT" "config.toml"
 KIMI_CONFIG="$KIMI_HOME/.kimi-code/config.toml"
@@ -1491,7 +1533,7 @@ HERMES_SETUP_DIR="$TESTDATA/setup_hermes"
 mkdir -p "$HERMES_SETUP_DIR"
 
 step "setup --target hermes --yes — accepted (installs skill)"
-OUT=$(cd "$HERMES_SETUP_DIR" && $M --data-dir "$HERMES_SETUP_DIR" setup --target hermes --yes 2>&1 || true)
+OUT=$(cd "$HERMES_SETUP_DIR" && HOME="$HERMES_SETUP_DIR" $M --data-dir "$HERMES_SETUP_DIR" setup --target hermes --yes 2>&1 || true)
 assert_contains "hermes target accepted" "$OUT" "Skill"
 assert_contains "hermes target shows config" "$OUT" "Setup complete"
 

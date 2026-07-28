@@ -107,6 +107,21 @@ static void check_sqlite(int rc, sqlite3* db, const char* ctx) {
   throw std::runtime_error(std::string(ctx) + ": " + (msg ? msg : "sqlite error"));
 }
 
+static std::vector<std::string> parse_string_array(const std::string& encoded) {
+  std::vector<std::string> values;
+  auto json = nlohmann::json::parse(encoded, nullptr, false);
+  if (!json.is_array()) {
+    return values;
+  }
+  values.reserve(json.size());
+  for (const auto& value : json) {
+    if (value.is_string()) {
+      values.push_back(value.get<std::string>());
+    }
+  }
+  return values;
+}
+
 Statement::Statement(sqlite3* db, const char* sql) {
   const char* tail = nullptr;
   int rc = sqlite3_prepare_v2(db, sql, -1, &stmt_, &tail);
@@ -483,22 +498,8 @@ Insight Database::scan_insight_row(Statement& st) {
   if (!st.column_null(10) && !st.column_text(10).empty()) {
     i.deleted_at = time_util::parse_rfc3339(st.column_text(10));
   }
-  auto tj = nlohmann::json::parse(tags, nullptr, false);
-  if (tj.is_array()) {
-    for (const auto& x : tj) {
-      if (x.is_string()) {
-        i.tags.push_back(x.get<std::string>());
-      }
-    }
-  }
-  auto ej = nlohmann::json::parse(ents, nullptr, false);
-  if (ej.is_array()) {
-    for (const auto& x : ej) {
-      if (x.is_string()) {
-        i.entities.push_back(x.get<std::string>());
-      }
-    }
-  }
+  i.tags = parse_string_array(tags);
+  i.entities = parse_string_array(ents);
   return i;
 }
 
@@ -730,22 +731,8 @@ std::tuple<std::vector<RetentionCandidate>, int> Database::get_retention_candida
       r.ins.access_count = st.column_int(7);
       r.ins.created_at = time_util::parse_rfc3339(st.column_text(8));
       r.ins.updated_at = time_util::parse_rfc3339(st.column_text(9));
-      auto tj = nlohmann::json::parse(tags, nullptr, false);
-      if (tj.is_array()) {
-        for (const auto& x : tj) {
-          if (x.is_string()) {
-            r.ins.tags.push_back(x.get<std::string>());
-          }
-        }
-      }
-      auto ej = nlohmann::json::parse(ents, nullptr, false);
-      if (ej.is_array()) {
-        for (const auto& x : ej) {
-          if (x.is_string()) {
-            r.ins.entities.push_back(x.get<std::string>());
-          }
-        }
-      }
+      r.ins.tags = parse_string_array(tags);
+      r.ins.entities = parse_string_array(ents);
       r.last_access = r.ins.created_at;
       if (!st.column_null(11)) {
         r.last_access = time_util::parse_rfc3339(st.column_text(11));

@@ -15,10 +15,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <initializer_list>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <sys/stat.h>
@@ -44,6 +46,12 @@ struct HookSelection {
   bool remind = true;
   bool nudge = true;
   bool compact = false;
+};
+
+struct HookFile {
+  const char* label;
+  const char* filename;
+  std::string_view content;
 };
 
 // --- ANSI / TTY ---
@@ -83,6 +91,15 @@ static std::string clean_version(std::string v) {
     v.resize(pos);
   }
   return v;
+}
+
+static std::string trim_ascii_whitespace(std::string value) {
+  size_t begin = value.find_first_not_of(" \t\r\n");
+  if (begin == std::string::npos) {
+    return {};
+  }
+  size_t end = value.find_last_not_of(" \t\r\n");
+  return value.substr(begin, end - begin + 1);
 }
 
 static bool look_path(const std::string& name, std::string& out) {
@@ -183,17 +200,22 @@ static std::string strip_json5(std::string_view s) {
   return b;
 }
 
-static nlohmann::json read_json_file(const fs::path& path) {
+static bool read_file_if_exists(const fs::path& path, std::string& raw) {
   std::error_code ec;
   if (!fs::exists(path, ec)) {
-    return nlohmann::json::object();
+    return false;
   }
   std::ifstream in(path);
   if (!in) {
     throw std::runtime_error("read " + path.string());
   }
-  std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  if (raw.empty()) {
+  raw.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  return true;
+}
+
+static nlohmann::json read_json_file(const fs::path& path) {
+  std::string raw;
+  if (!read_file_if_exists(path, raw) || raw.empty()) {
     return nlohmann::json::object();
   }
   std::string cleaned = strip_json5(raw);
@@ -262,34 +284,50 @@ static nlohmann::json filter_hook_array(const nlohmann::json& arr) {
   return out;
 }
 
-static void remove_claude_hooks(nlohmann::json& data) {
+static void remove_hook_events(nlohmann::json& data, std::initializer_list<const char*> keys,
+                               bool arrays_only = false, bool remove_lone_version = false) {
   if (!data.contains("hooks") || !data["hooks"].is_object()) {
     return;
   }
   auto& hooks = data["hooks"];
-  static const char* keys[] = {"UserPromptSubmit", "Stop", "SessionStart", "PreCompact"};
   for (const char* key : keys) {
-    if (!hooks.contains(key)) {
+    if (!hooks.contains(key) || (arrays_only && !hooks[key].is_array())) {
       continue;
     }
     nlohmann::json filtered = filter_hook_array(hooks[key]);
-    if (filtered.empty() || (filtered.is_array() && filtered.size() == 0)) {
+    if (filtered.empty()) {
       hooks.erase(key);
     } else {
-      hooks[key] = filtered;
+      hooks[key] = std::move(filtered);
     }
   }
   if (hooks.empty()) {
     data.erase("hooks");
+    if (remove_lone_version && data.contains("version") && data.size() == 1) {
+      data.erase("version");
+    }
   }
 }
 
-static void add_claude_hooks_selective(nlohmann::json& data, const std::string& hooks_dir, const HookSelection& sel) {
-  remove_claude_hooks(data);
+template <typename HookRemover>
+static nlohmann::json& prepare_hook_object(nlohmann::json& data, HookRemover&& remove_hooks,
+                                           bool ensure_version = false) {
+  remove_hooks(data);
+  if (ensure_version && !data.contains("version")) {
+    data["version"] = 1;
+  }
   if (!data.contains("hooks") || !data["hooks"].is_object()) {
     data["hooks"] = nlohmann::json::object();
   }
-  auto& hooks = data["hooks"];
+  return data["hooks"];
+}
+
+static void remove_claude_hooks(nlohmann::json& data) {
+  remove_hook_events(data, {"UserPromptSubmit", "Stop", "SessionStart", "PreCompact"});
+}
+
+static void add_claude_hooks_selective(nlohmann::json& data, const std::string& hooks_dir, const HookSelection& sel) {
+  auto& hooks = prepare_hook_object(data, remove_claude_hooks);
   fs::path hd = hooks_dir;
 
   auto prime_entry = nlohmann::json::object();
@@ -336,6 +374,45 @@ static void remove_if_empty_dir(const fs::path& dir) {
   }
 }
 
+static void remove_integration_tree(const fs::path& path, const char* label, int& errs,
+                                    std::string_view error_prefix = {}) {
+  std::error_code ec;
+  fs::remove_all(path, ec);
+  if (ec) {
+    status_error(label, std::string(error_prefix) + ec.message());
+    ++errs;
+  } else {
+    status_ok(label, path.string() + " removed");
+  }
+}
+
+template <typename HookRemover>
+static int eject_json_integration(std::string_view display, const std::string& config_dir,
+                                  const char* config_filename, const char* config_label,
+                                  HookRemover&& remove_hooks) {
+  int errs = 0;
+  std::cout << "\nRemoving " << display << " integration (" << config_dir << ")...\n";
+
+  remove_integration_tree(fs::path(config_dir) / "hooks" / "mnemon", "Hooks", errs);
+  remove_if_empty_dir(fs::path(config_dir) / "hooks");
+
+  fs::path config_path = fs::path(config_dir) / config_filename;
+  try {
+    nlohmann::json data = read_json_file(config_path);
+    remove_hooks(data);
+    write_or_remove_json_file(config_path, data);
+    status_ok(config_label, config_path.string() + " cleaned");
+  } catch (const std::exception& e) {
+    status_error(config_label, e.what());
+    ++errs;
+  }
+
+  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs);
+  remove_if_empty_dir(fs::path(config_dir) / "skills");
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
 static void chmod_path(const fs::path& p, mode_t mode) {
   ::chmod(p.string().c_str(), mode);
 }
@@ -349,6 +426,30 @@ static void write_bytes(const fs::path& path, std::string_view data, mode_t mode
   out.write(data.data(), static_cast<std::streamsize>(data.size()));
   out.close();
   chmod_path(path, mode);
+}
+
+static fs::path write_skill_file(const std::string& config_dir, std::string_view content) {
+  fs::path path = fs::path(config_dir) / "skills" / "mnemon" / "SKILL.md";
+  write_bytes(path, content, 0644);
+  return path;
+}
+
+static fs::path write_hook_file(const std::string& config_dir, const std::string& filename,
+                                std::string_view content) {
+  fs::path path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
+  write_bytes(path, content, 0755);
+  return path;
+}
+
+template <typename HookAdder>
+static fs::path register_json_hooks(const std::string& config_dir, const char* filename, HookAdder&& add_hooks) {
+  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
+  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
+  fs::path config_path = fs::path(config_dir) / filename;
+  nlohmann::json data = read_json_file(config_path);
+  add_hooks(data, abs_hooks_dir.string());
+  write_json_file(config_path, data);
+  return config_path;
 }
 
 // --- prompts ---
@@ -452,273 +553,96 @@ static void detection_line(bool detected, const std::string& display, const std:
 
 // --- detect ---
 
-static Environment detect_claude(bool global) {
+static Environment detect_environment_base(std::string name, std::string display, const char* executable,
+                                           const fs::path& global_dir, std::string config_dir) {
   Environment env;
-  env.name = "claude-code";
-  env.display = "Claude Code";
-  fs::path global_dir = fs::path(home_dir()) / ".claude";
-  std::string local_dir = ".claude";
-  env.config_dir = global ? global_dir.string() : local_dir;
+  env.name = std::move(name);
+  env.display = std::move(display);
+  env.config_dir = std::move(config_dir);
 
   std::string bin;
-  if (look_path("claude", bin)) {
+  if (look_path(executable, bin)) {
     env.detected = true;
     env.bin_path = bin;
     env.version = exec_version(bin);
   }
+
   std::error_code ec;
   if (fs::exists(global_dir, ec)) {
     env.detected = true;
   }
+  return env;
+}
+
+static Environment detect_skill_environment(std::string name, std::string display, const char* executable,
+                                            const fs::path& global_dir, std::string config_dir,
+                                            const char* config_filename = nullptr) {
+  Environment env =
+      detect_environment_base(std::move(name), std::move(display), executable, global_dir, std::move(config_dir));
+  std::error_code ec;
   fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
+  env.installed = fs::exists(skill, ec);
+  if (!env.installed && config_filename != nullptr) {
+    try {
+      env.installed = json_contains_mnemon(read_json_file(fs::path(env.config_dir) / config_filename));
+    } catch (...) {
+    }
   }
   return env;
+}
+
+static Environment detect_claude(bool global) {
+  fs::path global_dir = fs::path(home_dir()) / ".claude";
+  return detect_skill_environment("claude-code", "Claude Code", "claude", global_dir,
+                                  global ? global_dir.string() : ".claude");
 }
 
 static Environment detect_openclaw(bool global) {
-  Environment env;
-  env.name = "openclaw";
-  env.display = "OpenClaw";
   fs::path global_dir = fs::path(home_dir()) / ".openclaw";
-  std::string local_dir = ".openclaw";
-  env.config_dir = global ? global_dir.string() : local_dir;
-
-  std::string bin;
-  if (look_path("openclaw", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
-  std::error_code ec;
-  if (fs::exists(global_dir, ec)) {
-    env.detected = true;
-  }
-  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
-  }
-  return env;
+  return detect_skill_environment("openclaw", "OpenClaw", "openclaw", global_dir,
+                                  global ? global_dir.string() : ".openclaw");
 }
 
 static Environment detect_codex(bool global) {
-  Environment env;
-  env.name = "codex";
-  env.display = "Codex";
   fs::path global_dir = fs::path(home_dir()) / ".codex";
-  std::string local_dir = ".codex";
-  env.config_dir = global ? global_dir.string() : local_dir;
-
-  std::string bin;
-  if (look_path("codex", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
-  std::error_code ec;
-  if (fs::exists(global_dir, ec)) {
-    env.detected = true;
-  }
-  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
-  }
-  return env;
+  return detect_skill_environment("codex", "Codex", "codex", global_dir,
+                                  global ? global_dir.string() : ".codex");
 }
 
 static Environment detect_cursor(bool global) {
-  Environment env;
-  env.name = "cursor";
-  env.display = "Cursor";
   fs::path global_dir = fs::path(home_dir()) / ".cursor";
-  std::string local_dir = ".cursor";
-  env.config_dir = global ? global_dir.string() : local_dir;
-
-  std::string bin;
-  if (look_path("cursor", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
-  std::error_code ec;
-  if (fs::exists(global_dir, ec)) {
-    env.detected = true;
-  }
-  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
-  }
-  return env;
+  return detect_skill_environment("cursor", "Cursor", "cursor", global_dir,
+                                  global ? global_dir.string() : ".cursor");
 }
 
 static Environment detect_trae(bool global) {
-  Environment env;
-  env.name = "trae";
-  env.display = "Trae";
   fs::path global_dir = fs::path(home_dir()) / ".trae";
-  std::string local_dir = ".trae";
-  env.config_dir = global ? global_dir.string() : local_dir;
-
-  std::string bin;
-  if (look_path("trae", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
-  std::error_code ec;
-  if (fs::exists(global_dir, ec)) {
-    env.detected = true;
-  }
-  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
-  } else {
-    fs::path hooks_path = fs::path(env.config_dir) / "hooks.json";
-    try {
-      nlohmann::json data = read_json_file(hooks_path);
-      if (json_contains_mnemon(data)) {
-        env.installed = true;
-      }
-    } catch (...) {
-    }
-  }
-  return env;
+  return detect_skill_environment("trae", "Trae", "trae", global_dir, global ? global_dir.string() : ".trae",
+                                  "hooks.json");
 }
 
 static Environment detect_qoder(bool global) {
-  Environment env;
-  env.name = "qoder";
-  env.display = "Qoder";
   fs::path global_dir = fs::path(home_dir()) / ".qoder";
-  std::string local_dir = ".qoder";
-  env.config_dir = global ? global_dir.string() : local_dir;
-
-  std::string bin;
-  if (look_path("qoder", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
-  std::error_code ec;
-  if (fs::exists(global_dir, ec)) {
-    env.detected = true;
-  }
-  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
-  } else {
-    fs::path settings_path = fs::path(env.config_dir) / "settings.json";
-    try {
-      nlohmann::json data = read_json_file(settings_path);
-      if (json_contains_mnemon(data)) {
-        env.installed = true;
-      }
-    } catch (...) {
-    }
-  }
-  return env;
+  return detect_skill_environment("qoder", "Qoder", "qoder", global_dir,
+                                  global ? global_dir.string() : ".qoder", "settings.json");
 }
 
 static Environment detect_qoderwork() {
-  Environment env;
-  env.name = "qoderwork";
-  env.display = "QoderWork";
   fs::path config_dir = fs::path(home_dir()) / ".qoderwork";
-  env.config_dir = config_dir.string();
-
-  std::string bin;
-  if (look_path("qoderwork", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
-  std::error_code ec;
-  if (fs::exists(config_dir, ec)) {
-    env.detected = true;
-  }
-  fs::path skill = config_dir / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
-  } else {
-    fs::path settings_path = config_dir / "settings.json";
-    try {
-      nlohmann::json data = read_json_file(settings_path);
-      if (json_contains_mnemon(data)) {
-        env.installed = true;
-      }
-    } catch (...) {
-    }
-  }
-  return env;
+  return detect_skill_environment("qoderwork", "QoderWork", "qoderwork", config_dir, config_dir.string(),
+                                  "settings.json");
 }
 
 static Environment detect_codebuddy(bool global) {
-  Environment env;
-  env.name = "codebuddy";
-  env.display = "CodeBuddy";
   fs::path global_dir = fs::path(home_dir()) / ".codebuddy";
-  std::string local_dir = ".codebuddy";
-  env.config_dir = global ? global_dir.string() : local_dir;
-
-  std::string bin;
-  if (look_path("codebuddy", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
-  std::error_code ec;
-  if (fs::exists(global_dir, ec)) {
-    env.detected = true;
-  }
-  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
-  } else {
-    fs::path settings_path = fs::path(env.config_dir) / "settings.json";
-    try {
-      nlohmann::json data = read_json_file(settings_path);
-      if (json_contains_mnemon(data)) {
-        env.installed = true;
-      }
-    } catch (...) {
-    }
-  }
-  return env;
+  return detect_skill_environment("codebuddy", "CodeBuddy", "codebuddy", global_dir,
+                                  global ? global_dir.string() : ".codebuddy", "settings.json");
 }
 
 static Environment detect_workbuddy(bool global) {
-  Environment env;
-  env.name = "workbuddy";
-  env.display = "WorkBuddy";
   fs::path global_dir = fs::path(home_dir()) / ".workbuddy";
-  std::string local_dir = ".workbuddy";
-  env.config_dir = global ? global_dir.string() : local_dir;
-
-  std::string bin;
-  if (look_path("workbuddy", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
-  std::error_code ec;
-  if (fs::exists(global_dir, ec)) {
-    env.detected = true;
-  }
-  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
-  } else {
-    fs::path settings_path = fs::path(env.config_dir) / "settings.json";
-    try {
-      nlohmann::json data = read_json_file(settings_path);
-      if (json_contains_mnemon(data)) {
-        env.installed = true;
-      }
-    } catch (...) {
-    }
-  }
-  return env;
+  return detect_skill_environment("workbuddy", "WorkBuddy", "workbuddy", global_dir,
+                                  global ? global_dir.string() : ".workbuddy", "settings.json");
 }
 
 static Environment detect_kimi() {
@@ -727,10 +651,7 @@ static Environment detect_kimi() {
   env.display = "Kimi Code";
   fs::path config_dir = fs::path(home_dir()) / ".kimi-code";
   if (const char* env_home = std::getenv("KIMI_CODE_HOME")) {
-    std::string trimmed(env_home);
-    size_t b = trimmed.find_first_not_of(" \t\r\n");
-    size_t e = trimmed.find_last_not_of(" \t\r\n");
-    trimmed = (b == std::string::npos) ? "" : trimmed.substr(b, e - b + 1);
+    std::string trimmed = trim_ascii_whitespace(env_home);
     if (!trimmed.empty()) {
       config_dir = trimmed;
     }
@@ -765,34 +686,18 @@ static Environment detect_kimi() {
 static fs::path opencode_config_path(const std::string& config_dir);
 
 static Environment detect_opencode(bool global) {
-  Environment env;
-  env.name = "opencode";
-  env.display = "OpenCode";
   fs::path global_dir = fs::path(home_dir()) / ".config" / "opencode";
   std::string config_dir = global ? global_dir.string() : std::string(".opencode");
   if (global) {
     if (const char* env_dir = std::getenv("OPENCODE_CONFIG_DIR")) {
-      std::string trimmed(env_dir);
-      size_t b = trimmed.find_first_not_of(" \t\r\n");
-      size_t e = trimmed.find_last_not_of(" \t\r\n");
-      trimmed = (b == std::string::npos) ? "" : trimmed.substr(b, e - b + 1);
+      std::string trimmed = trim_ascii_whitespace(env_dir);
       if (!trimmed.empty()) {
         config_dir = trimmed;
       }
     }
   }
-  env.config_dir = config_dir;
-
-  std::string bin;
-  if (look_path("opencode", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
+  Environment env = detect_environment_base("opencode", "OpenCode", "opencode", global_dir, config_dir);
   std::error_code ec;
-  if (fs::exists(global_dir, ec)) {
-    env.detected = true;
-  }
   fs::path skill = fs::path(config_dir) / "skills" / "mnemon" / "SKILL.md";
   fs::path plugin = fs::path(config_dir) / "plugins" / "mnemon.js";
   if (fs::exists(skill, ec)) {
@@ -812,77 +717,19 @@ static Environment detect_opencode(bool global) {
 }
 
 static Environment detect_nanobot(bool global) {
-  Environment env;
-  env.name = "nanobot";
-  env.display = "Nanobot";
   fs::path global_dir = fs::path(home_dir()) / ".nanobot" / "workspace";
-  std::string local_dir = ".nanobot";
-  env.config_dir = global ? global_dir.string() : local_dir;
-
-  std::string bin;
-  if (look_path("nanobot", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
-  std::error_code ec;
-  if (fs::exists(global_dir, ec)) {
-    env.detected = true;
-  }
-  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
-  }
-  return env;
+  return detect_skill_environment("nanobot", "Nanobot", "nanobot", global_dir,
+                                  global ? global_dir.string() : ".nanobot");
 }
 
 static Environment detect_pi(bool global) {
-  Environment env;
-  env.name = "pi";
-  env.display = "Pi";
   fs::path global_dir = fs::path(home_dir()) / ".pi" / "agent";
-  std::string local_dir = ".pi";
-  env.config_dir = global ? global_dir.string() : local_dir;
-
-  std::string bin;
-  if (look_path("pi", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
-  std::error_code ec;
-  if (fs::exists(global_dir, ec)) {
-    env.detected = true;
-  }
-  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
-  }
-  return env;
+  return detect_skill_environment("pi", "Pi", "pi", global_dir, global ? global_dir.string() : ".pi");
 }
 
 static Environment detect_hermes() {
-  Environment env;
-  env.name = "hermes";
-  env.display = "Hermes Agent";
   fs::path global_dir = fs::path(home_dir()) / ".hermes";
-  env.config_dir = global_dir.string();
-
-  std::string bin;
-  if (look_path("hermes", bin)) {
-    env.detected = true;
-    env.bin_path = bin;
-    env.version = exec_version(bin);
-  }
-  std::error_code ec;
-  if (fs::exists(global_dir, ec)) {
-    env.detected = true;
-  }
-  fs::path skill = global_dir / "skills" / "mnemon" / "SKILL.md";
-  if (fs::exists(skill, ec)) {
-    env.installed = true;
-  }
-  return env;
+  return detect_skill_environment("hermes", "Hermes Agent", "hermes", global_dir, global_dir.string());
 }
 
 static std::vector<Environment> detect_environments(bool global) {
@@ -908,16 +755,70 @@ static fs::path write_prompt_files() {
   return prompt_dir;
 }
 
+template <typename SkillWriter>
+static bool install_skill_and_prompts(int step_count, SkillWriter&& write_skill, std::string& prompt_path) {
+  std::cout << "\n[1/" << step_count << "] Skill\n";
+  try {
+    fs::path path = write_skill();
+    status_ok("Skill", path.string());
+  } catch (const std::exception& e) {
+    status_error("Skill", e.what());
+    return false;
+  }
+
+  std::cout << "\n[2/" << step_count << "] Prompts\n";
+  try {
+    fs::path path = write_prompt_files();
+    status_ok("Prompts", path.string());
+    prompt_path = path.string();
+  } catch (const std::exception& e) {
+    status_error("Prompts", e.what());
+    return false;
+  }
+  return true;
+}
+
+template <size_t N, typename HookWriter>
+static bool install_hook_files(const std::array<HookFile, N>& hook_files, HookWriter&& write_hook) {
+  for (const auto& hook : hook_files) {
+    try {
+      fs::path path = write_hook(hook);
+      status_ok(hook.label, path.string());
+    } catch (const std::exception& e) {
+      status_error(hook.label, e.what());
+      return false;
+    }
+  }
+  return true;
+}
+
+template <typename HookRegistrar>
+static bool finish_hook_install(const std::string& config_dir, const std::string& prompt_path,
+                                HookRegistrar&& register_hooks, std::string_view activation,
+                                std::string_view eject_hint) {
+  try {
+    fs::path path = register_hooks();
+    status_updated("Hooks config", path.string());
+  } catch (const std::exception& e) {
+    status_error("Hooks config", e.what());
+    return false;
+  }
+
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Hooks   " << config_dir << "/hooks.json (SessionStart, UserPromptSubmit, Stop)\n";
+  std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
+  std::cout << activation << "\n";
+  std::cout << eject_hint << "\n";
+  return true;
+}
+
 static fs::path claude_write_skill(const std::string& config_dir) {
-  fs::path skill_path = fs::path(config_dir) / "skills" / "mnemon" / "SKILL.md";
-  write_bytes(skill_path, mnemon::embedded::claude_SKILL_md(), 0644);
-  return skill_path;
+  return write_skill_file(config_dir, mnemon::embedded::claude_SKILL_md());
 }
 
 static fs::path claude_write_hook(const std::string& config_dir, const std::string& filename, std::string_view content) {
-  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
-  write_bytes(hook_path, content, 0755);
-  return hook_path;
+  return write_hook_file(config_dir, filename, content);
 }
 
 // Directory Claude Code treats as user-global configuration: $CLAUDE_CONFIG_DIR
@@ -980,9 +881,7 @@ static fs::path claude_register_hooks(const std::string& config_dir, const HookS
 }
 
 static fs::path openclaw_write_skill(const std::string& config_dir) {
-  fs::path p = fs::path(config_dir) / "skills" / "mnemon" / "SKILL.md";
-  write_bytes(p, mnemon::embedded::openclaw_SKILL_md(), 0644);
-  return p;
+  return write_skill_file(config_dir, mnemon::embedded::openclaw_SKILL_md());
 }
 
 static fs::path openclaw_write_hook(const std::string& config_dir) {
@@ -1145,15 +1044,7 @@ static void eject_local_markdown(bool yes) {
 static int claude_eject(const std::string& config_dir, bool yes) {
   std::cout << "\nRemoving Claude Code integration (" << config_dir << ")...\n";
   int errs = 0;
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  std::error_code ec;
-  fs::remove_all(hooks_dir, ec);
-  if (ec) {
-    status_error("Hooks", ec.message());
-    ++errs;
-  } else {
-    status_ok("Hooks", hooks_dir.string() + " removed");
-  }
+  remove_integration_tree(fs::path(config_dir) / "hooks" / "mnemon", "Hooks", errs);
   remove_if_empty_dir(fs::path(config_dir) / "hooks");
 
   fs::path settings_path = fs::path(config_dir) / "settings.json";
@@ -1167,15 +1058,7 @@ static int claude_eject(const std::string& config_dir, bool yes) {
     ++errs;
   }
 
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  ec.clear();
-  fs::remove_all(skill_dir, ec);
-  if (ec) {
-    status_error("Skill", ec.message());
-    ++errs;
-  } else {
-    status_ok("Skill", skill_dir.string() + " removed");
-  }
+  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs);
   remove_if_empty_dir(fs::path(config_dir) / "skills");
   remove_if_empty_dir(config_dir);
 
@@ -1290,25 +1173,13 @@ static int openclaw_eject(const std::string& config_dir, bool yes) {
 // --- nanobot ---
 
 static fs::path nanobot_write_skill(const std::string& config_dir) {
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::create_directories(skill_dir);
-  fs::path p = skill_dir / "SKILL.md";
-  write_bytes(p, mnemon::embedded::nanobot_SKILL_md(), 0644);
-  return p;
+  return write_skill_file(config_dir, mnemon::embedded::nanobot_SKILL_md());
 }
 
 static int nanobot_eject(const std::string& config_dir) {
   int errs = 0;
   std::cout << "\nRemoving Nanobot integration (" << config_dir << ")...\n";
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  std::error_code ec;
-  fs::remove_all(skill_dir, ec);
-  if (ec) {
-    status_error("Skill", "remove failed: " + ec.message());
-    ++errs;
-  } else {
-    status_ok("Skill", skill_dir.string() + " removed");
-  }
+  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs, "remove failed: ");
   remove_if_empty_dir((fs::path(config_dir) / "skills").string());
   remove_if_empty_dir(config_dir);
   return errs;
@@ -1326,22 +1197,8 @@ static bool install_nanobot(Environment env, bool global, bool setup_yes) {
     config_dir = (idx == 1) ? local_dir : global_dir;
   }
   std::cout << "\nSetting up Nanobot (" << config_dir << ")...\n";
-  std::cout << "\n[1/2] Skill\n";
-  try {
-    auto p = nanobot_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-  std::cout << "\n[2/2] Prompts\n";
   std::string prompt_path;
-  try {
-    auto p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
+  if (!install_skill_and_prompts(2, [&] { return nanobot_write_skill(config_dir); }, prompt_path)) {
     return false;
   }
   std::cout << "\nSetup complete!\n";
@@ -1356,11 +1213,7 @@ static bool install_nanobot(Environment env, bool global, bool setup_yes) {
 // --- hermes ---
 
 static fs::path hermes_write_skill(const std::string& config_dir) {
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::create_directories(skill_dir);
-  fs::path p = skill_dir / "SKILL.md";
-  write_bytes(p, mnemon::embedded::hermes_SKILL_md(), 0644);
-  return p;
+  return write_skill_file(config_dir, mnemon::embedded::hermes_SKILL_md());
 }
 
 static fs::path hermes_write_hook(const std::string& config_dir, const std::string& filename,
@@ -1378,16 +1231,8 @@ static fs::path hermes_write_hook(const std::string& config_dir, const std::stri
 // Read config.yaml into a YAML map. Missing or blank files yield an empty map, matching the
 // Go reference's readYAMLFile.
 static yaml::Value yaml_read_file(const fs::path& path) {
-  std::error_code ec;
-  if (!fs::exists(path, ec)) {
-    return yaml::Value::make_map();
-  }
-  std::ifstream in(path);
-  if (!in) {
-    throw std::runtime_error("read " + path.string());
-  }
-  std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  if (raw.find_first_not_of(" \t\r\n") == std::string::npos) {
+  std::string raw;
+  if (!read_file_if_exists(path, raw) || raw.find_first_not_of(" \t\r\n") == std::string::npos) {
     return yaml::Value::make_map();
   }
   yaml::Value v = yaml::parse(raw);
@@ -1510,14 +1355,7 @@ static int hermes_eject(const std::string& config_dir) {
   std::cout << "\nRemoving Hermes Agent integration (" << config_dir << ")...\n";
   std::error_code ec;
 
-  fs::path hooks_dir = fs::path(config_dir) / "agent-hooks" / "mnemon";
-  fs::remove_all(hooks_dir, ec);
-  if (ec) {
-    status_error("Hooks", "remove failed: " + ec.message());
-    ++errs;
-  } else {
-    status_ok("Hooks", hooks_dir.string() + " removed");
-  }
+  remove_integration_tree(fs::path(config_dir) / "agent-hooks" / "mnemon", "Hooks", errs, "remove failed: ");
   remove_if_empty_dir((fs::path(config_dir) / "agent-hooks").string());
 
   // Remove mnemon entries from config.yaml, preserving unrelated config. Missing files read
@@ -1533,14 +1371,7 @@ static int hermes_eject(const std::string& config_dir) {
     ++errs;
   }
 
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::remove_all(skill_dir, ec);
-  if (ec) {
-    status_error("Skill", "remove failed: " + ec.message());
-    ++errs;
-  } else {
-    status_ok("Skill", skill_dir.string() + " removed");
-  }
+  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs, "remove failed: ");
   remove_if_empty_dir((fs::path(config_dir) / "skills").string());
 
   fs::path state_dir = fs::path(config_dir) / "mnemon";
@@ -1555,23 +1386,8 @@ static bool install_hermes(Environment env, bool setup_yes, const RunOptions& op
   std::string config_dir = env.config_dir;
   std::cout << "\nSetting up Hermes Agent (" << config_dir << ")...\n";
 
-  std::cout << "\n[1/4] Skill\n";
-  try {
-    auto p = hermes_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-
-  std::cout << "\n[2/4] Prompts\n";
   std::string prompt_path;
-  try {
-    auto p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
+  if (!install_skill_and_prompts(4, [&] { return hermes_write_skill(config_dir); }, prompt_path)) {
     return false;
   }
 
@@ -1651,11 +1467,7 @@ static bool install_hermes(Environment env, bool setup_yes, const RunOptions& op
 // --- pi ---
 
 static fs::path pi_write_skill(const std::string& config_dir) {
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::create_directories(skill_dir);
-  fs::path p = skill_dir / "SKILL.md";
-  write_bytes(p, mnemon::embedded::pi_SKILL_md(), 0644);
-  return p;
+  return write_skill_file(config_dir, mnemon::embedded::pi_SKILL_md());
 }
 
 static fs::path pi_write_extension(const std::string& config_dir) {
@@ -1678,14 +1490,7 @@ static int pi_eject(const std::string& config_dir) {
   } else {
     status_ok("Extension", ext.string() + " removed");
   }
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::remove_all(skill_dir, ec);
-  if (ec) {
-    status_error("Skill", "remove failed: " + ec.message());
-    ++errs;
-  } else {
-    status_ok("Skill", skill_dir.string() + " removed");
-  }
+  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs, "remove failed: ");
   remove_if_empty_dir((fs::path(config_dir) / "extensions").string());
   remove_if_empty_dir((fs::path(config_dir) / "skills").string());
   remove_if_empty_dir(config_dir);
@@ -1704,22 +1509,8 @@ static bool install_pi(Environment env, bool global, bool setup_yes) {
     config_dir = (idx == 1) ? global_dir : local_dir;
   }
   std::cout << "\nSetting up Pi (" << config_dir << ")...\n";
-  std::cout << "\n[1/3] Skill\n";
-  try {
-    auto p = pi_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-  std::cout << "\n[2/3] Prompts\n";
   std::string prompt_path;
-  try {
-    auto p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
+  if (!install_skill_and_prompts(3, [&] { return pi_write_skill(config_dir); }, prompt_path)) {
     return false;
   }
   std::cout << "\n[3/3] Extension\n";
@@ -1743,33 +1534,11 @@ static bool install_pi(Environment env, bool global, bool setup_yes) {
 // --- codex ---
 
 static void remove_codex_hooks(nlohmann::json& data) {
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    return;
-  }
-  auto& hooks = data["hooks"];
-  static const char* keys[] = {"SessionStart", "UserPromptSubmit", "Stop"};
-  for (const char* key : keys) {
-    if (!hooks.contains(key)) {
-      continue;
-    }
-    nlohmann::json filtered = filter_hook_array(hooks[key]);
-    if (filtered.empty()) {
-      hooks.erase(key);
-    } else {
-      hooks[key] = filtered;
-    }
-  }
-  if (hooks.empty()) {
-    data.erase("hooks");
-  }
+  remove_hook_events(data, {"SessionStart", "UserPromptSubmit", "Stop"});
 }
 
 static void add_codex_hooks(nlohmann::json& data, const std::string& hooks_dir) {
-  remove_codex_hooks(data);
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    data["hooks"] = nlohmann::json::object();
-  }
-  auto& hooks = data["hooks"];
+  auto& hooks = prepare_hook_object(data, remove_codex_hooks);
   fs::path hd = hooks_dir;
 
   auto prime_entry = nlohmann::json::object();
@@ -1799,67 +1568,19 @@ static void add_codex_hooks(nlohmann::json& data, const std::string& hooks_dir) 
 }
 
 static fs::path codex_write_skill(const std::string& config_dir) {
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::create_directories(skill_dir);
-  fs::path p = skill_dir / "SKILL.md";
-  write_bytes(p, mnemon::embedded::codex_SKILL_md(), 0644);
-  return p;
+  return write_skill_file(config_dir, mnemon::embedded::codex_SKILL_md());
 }
 
 static fs::path codex_write_hook(const std::string& config_dir, const std::string& filename, std::string_view content) {
-  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
-  write_bytes(hook_path, content, 0755);
-  return hook_path;
+  return write_hook_file(config_dir, filename, content);
 }
 
 static fs::path codex_register_hooks(const std::string& config_dir) {
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
-  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
-  nlohmann::json data = read_json_file(hooks_path);
-  add_codex_hooks(data, abs_hooks_dir.string());
-  write_json_file(hooks_path, data);
-  return hooks_path;
+  return register_json_hooks(config_dir, "hooks.json", add_codex_hooks);
 }
 
 static int codex_eject(const std::string& config_dir) {
-  int errs = 0;
-  std::cout << "\nRemoving Codex integration (" << config_dir << ")...\n";
-
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  std::error_code ec;
-  fs::remove_all(hooks_dir, ec);
-  if (ec) {
-    status_error("Hooks", ec.message());
-    ++errs;
-  } else {
-    status_ok("Hooks", hooks_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "hooks");
-
-  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
-  try {
-    nlohmann::json data = read_json_file(hooks_path);
-    remove_codex_hooks(data);
-    write_or_remove_json_file(hooks_path, data);
-    status_ok("Hooks config", hooks_path.string() + " cleaned");
-  } catch (const std::exception& e) {
-    status_error("Hooks config", e.what());
-    ++errs;
-  }
-
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  ec.clear();
-  fs::remove_all(skill_dir, ec);
-  if (ec) {
-    status_error("Skill", ec.message());
-    ++errs;
-  } else {
-    status_ok("Skill", skill_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "skills");
-  remove_if_empty_dir(config_dir);
-  return errs;
+  return eject_json_integration("Codex", config_dir, "hooks.json", "Hooks config", remove_codex_hooks);
 }
 
 static bool install_codex(Environment env, bool global, bool setup_yes) {
@@ -1876,103 +1597,35 @@ static bool install_codex(Environment env, bool global, bool setup_yes) {
 
   std::cout << "\nSetting up Codex (" << config_dir << ")...\n";
 
-  std::cout << "\n[1/4] Skill\n";
-  try {
-    fs::path p = codex_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-
-  std::cout << "\n[2/4] Prompts\n";
   std::string prompt_path;
-  try {
-    fs::path p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
+  if (!install_skill_and_prompts(4, [&] { return codex_write_skill(config_dir); }, prompt_path)) {
     return false;
   }
 
   std::cout << "\n[3/4] Hooks\n";
-  try {
-    fs::path p = codex_write_hook(config_dir, "prime.sh", mnemon::embedded::codex_prime_sh());
-    status_ok("Hook: prime", p.string());
-  } catch (const std::exception& e) {
-    status_error("Hook: prime", e.what());
-    return false;
-  }
-  try {
-    fs::path p = codex_write_hook(config_dir, "user_prompt.sh", mnemon::embedded::codex_user_prompt_sh());
-    status_ok("Hook: remind", p.string());
-  } catch (const std::exception& e) {
-    status_error("Hook: remind", e.what());
-    return false;
-  }
-  try {
-    fs::path p = codex_write_hook(config_dir, "stop.sh", mnemon::embedded::codex_stop_sh());
-    status_ok("Hook: stop", p.string());
-  } catch (const std::exception& e) {
-    status_error("Hook: stop", e.what());
+  const std::array<HookFile, 3> hook_files = {
+      {{"Hook: prime", "prime.sh", mnemon::embedded::codex_prime_sh()},
+       {"Hook: remind", "user_prompt.sh", mnemon::embedded::codex_user_prompt_sh()},
+       {"Hook: stop", "stop.sh", mnemon::embedded::codex_stop_sh()}}};
+  if (!install_hook_files(
+          hook_files, [&](const HookFile& hook) { return codex_write_hook(config_dir, hook.filename, hook.content); })) {
     return false;
   }
 
   std::cout << "\n[4/4] Config\n";
-  try {
-    fs::path p = codex_register_hooks(config_dir);
-    status_updated("Hooks config", p.string());
-  } catch (const std::exception& e) {
-    status_error("Hooks config", e.what());
-    return false;
-  }
-
-  std::cout << "\nSetup complete!\n";
-  std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
-  std::cout << "  Hooks   " << config_dir << "/hooks.json (SessionStart, UserPromptSubmit, Stop)\n";
-  std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
-  std::cout << "Start a new Codex session to activate.\n";
-  std::cout << "Run 'mnemon setup --eject --target codex' to remove.\n";
-  return true;
+  return finish_hook_install(config_dir, prompt_path, [&] { return codex_register_hooks(config_dir); },
+                             "Start a new Codex session to activate.",
+                             "Run 'mnemon setup --eject --target codex' to remove.");
 }
 
 // --- cursor ---
 
 static void remove_cursor_hooks(nlohmann::json& data) {
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    return;
-  }
-  auto& hooks = data["hooks"];
-  static const char* keys[] = {"sessionStart", "stop", "preCompact"};
-  for (const char* key : keys) {
-    if (!hooks.contains(key) || !hooks[key].is_array()) {
-      continue;
-    }
-    nlohmann::json filtered = filter_hook_array(hooks[key]);
-    if (filtered.empty()) {
-      hooks.erase(key);
-    } else {
-      hooks[key] = filtered;
-    }
-  }
-  if (hooks.empty()) {
-    data.erase("hooks");
-    if (data.contains("version") && data.size() == 1) {
-      data.erase("version");
-    }
-  }
+  remove_hook_events(data, {"sessionStart", "stop", "preCompact"}, true, true);
 }
 
 static void add_cursor_hooks(nlohmann::json& data, const std::string& hooks_dir, const HookSelection& sel) {
-  remove_cursor_hooks(data);
-  if (!data.contains("version")) {
-    data["version"] = 1;
-  }
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    data["hooks"] = nlohmann::json::object();
-  }
-  auto& hooks = data["hooks"];
+  auto& hooks = prepare_hook_object(data, remove_cursor_hooks, true);
   fs::path hd = hooks_dir;
 
   auto session_entry = nlohmann::json::object();
@@ -2006,67 +1659,22 @@ static void add_cursor_hooks(nlohmann::json& data, const std::string& hooks_dir,
 }
 
 static fs::path cursor_write_skill(const std::string& config_dir) {
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::create_directories(skill_dir);
-  fs::path p = skill_dir / "SKILL.md";
-  write_bytes(p, mnemon::embedded::cursor_SKILL_md(), 0644);
-  return p;
+  return write_skill_file(config_dir, mnemon::embedded::cursor_SKILL_md());
 }
 
 static fs::path cursor_write_hook(const std::string& config_dir, const std::string& filename, std::string_view content) {
-  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
-  write_bytes(hook_path, content, 0755);
-  return hook_path;
+  return write_hook_file(config_dir, filename, content);
 }
 
 static fs::path cursor_register_hooks(const std::string& config_dir, const HookSelection& sel) {
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
-  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
-  nlohmann::json data = read_json_file(hooks_path);
-  add_cursor_hooks(data, abs_hooks_dir.string(), sel);
-  write_json_file(hooks_path, data);
-  return hooks_path;
+  return register_json_hooks(config_dir, "hooks.json",
+                             [&](nlohmann::json& data, const std::string& hooks_dir) {
+                               add_cursor_hooks(data, hooks_dir, sel);
+                             });
 }
 
 static int cursor_eject(const std::string& config_dir) {
-  int errs = 0;
-  std::cout << "\nRemoving Cursor integration (" << config_dir << ")...\n";
-
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  std::error_code ec;
-  fs::remove_all(hooks_dir, ec);
-  if (ec) {
-    status_error("Hooks", ec.message());
-    ++errs;
-  } else {
-    status_ok("Hooks", hooks_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "hooks");
-
-  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
-  try {
-    nlohmann::json data = read_json_file(hooks_path);
-    remove_cursor_hooks(data);
-    write_or_remove_json_file(hooks_path, data);
-    status_ok("Hooks config", hooks_path.string() + " cleaned");
-  } catch (const std::exception& e) {
-    status_error("Hooks config", e.what());
-    ++errs;
-  }
-
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  ec.clear();
-  fs::remove_all(skill_dir, ec);
-  if (ec) {
-    status_error("Skill", ec.message());
-    ++errs;
-  } else {
-    status_ok("Skill", skill_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "skills");
-  remove_if_empty_dir(config_dir);
-  return errs;
+  return eject_json_integration("Cursor", config_dir, "hooks.json", "Hooks config", remove_cursor_hooks);
 }
 
 static HookSelection select_cursor_optional_hooks(bool setup_yes) {
@@ -2112,23 +1720,8 @@ static bool install_cursor(Environment env, bool global, bool setup_yes) {
 
   std::cout << "\nSetting up Cursor (" << config_dir << ")...\n";
 
-  std::cout << "\n[1/4] Skill\n";
-  try {
-    fs::path p = cursor_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-
-  std::cout << "\n[2/4] Prompts\n";
   std::string prompt_path;
-  try {
-    fs::path p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
+  if (!install_skill_and_prompts(4, [&] { return cursor_write_skill(config_dir); }, prompt_path)) {
     return false;
   }
 
@@ -2189,28 +1782,8 @@ static bool install_cursor(Environment env, bool global, bool setup_yes) {
 // --- trae ---
 
 static void remove_trae_hooks(nlohmann::json& data) {
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    return;
-  }
-  auto& hooks = data["hooks"];
-  static const char* keys[] = {"SessionStart", "UserPromptSubmit", "Stop", "PreToolUse", "PostToolUse", "Notification"};
-  for (const char* key : keys) {
-    if (!hooks.contains(key) || !hooks[key].is_array()) {
-      continue;
-    }
-    nlohmann::json filtered = filter_hook_array(hooks[key]);
-    if (filtered.empty()) {
-      hooks.erase(key);
-    } else {
-      hooks[key] = filtered;
-    }
-  }
-  if (hooks.empty()) {
-    data.erase("hooks");
-    if (data.contains("version") && data.size() == 1) {
-      data.erase("version");
-    }
-  }
+  remove_hook_events(data, {"SessionStart", "UserPromptSubmit", "Stop", "PreToolUse", "PostToolUse", "Notification"},
+                     true, true);
 }
 
 static void add_trae_hook(nlohmann::json& hooks, const char* event, int loop_limit, const std::string& command) {
@@ -2226,14 +1799,7 @@ static void add_trae_hook(nlohmann::json& hooks, const char* event, int loop_lim
 }
 
 static void add_trae_hooks(nlohmann::json& data, const std::string& hooks_dir) {
-  remove_trae_hooks(data);
-  if (!data.contains("version")) {
-    data["version"] = 1;
-  }
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    data["hooks"] = nlohmann::json::object();
-  }
-  auto& hooks = data["hooks"];
+  auto& hooks = prepare_hook_object(data, remove_trae_hooks, true);
   fs::path hd = hooks_dir;
   add_trae_hook(hooks, "SessionStart", 0, (hd / "prime.sh").string());
   add_trae_hook(hooks, "UserPromptSubmit", 0, (hd / "user_prompt.sh").string());
@@ -2241,67 +1807,19 @@ static void add_trae_hooks(nlohmann::json& data, const std::string& hooks_dir) {
 }
 
 static fs::path trae_write_skill(const std::string& config_dir) {
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::create_directories(skill_dir);
-  fs::path p = skill_dir / "SKILL.md";
-  write_bytes(p, mnemon::embedded::trae_SKILL_md(), 0644);
-  return p;
+  return write_skill_file(config_dir, mnemon::embedded::trae_SKILL_md());
 }
 
 static fs::path trae_write_hook(const std::string& config_dir, const std::string& filename, std::string_view content) {
-  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
-  write_bytes(hook_path, content, 0755);
-  return hook_path;
+  return write_hook_file(config_dir, filename, content);
 }
 
 static fs::path trae_register_hooks(const std::string& config_dir) {
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
-  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
-  nlohmann::json data = read_json_file(hooks_path);
-  add_trae_hooks(data, abs_hooks_dir.string());
-  write_json_file(hooks_path, data);
-  return hooks_path;
+  return register_json_hooks(config_dir, "hooks.json", add_trae_hooks);
 }
 
 static int trae_eject(const std::string& config_dir) {
-  int errs = 0;
-  std::cout << "\nRemoving Trae integration (" << config_dir << ")...\n";
-
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  std::error_code ec;
-  fs::remove_all(hooks_dir, ec);
-  if (ec) {
-    status_error("Hooks", ec.message());
-    ++errs;
-  } else {
-    status_ok("Hooks", hooks_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "hooks");
-
-  fs::path hooks_path = fs::path(config_dir) / "hooks.json";
-  try {
-    nlohmann::json data = read_json_file(hooks_path);
-    remove_trae_hooks(data);
-    write_or_remove_json_file(hooks_path, data);
-    status_ok("Hooks config", hooks_path.string() + " cleaned");
-  } catch (const std::exception& e) {
-    status_error("Hooks config", e.what());
-    ++errs;
-  }
-
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  ec.clear();
-  fs::remove_all(skill_dir, ec);
-  if (ec) {
-    status_error("Skill", ec.message());
-    ++errs;
-  } else {
-    status_ok("Skill", skill_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "skills");
-  remove_if_empty_dir(config_dir);
-  return errs;
+  return eject_json_integration("Trae", config_dir, "hooks.json", "Hooks config", remove_trae_hooks);
 }
 
 static bool install_trae(Environment env, bool global, bool setup_yes) {
@@ -2318,88 +1836,33 @@ static bool install_trae(Environment env, bool global, bool setup_yes) {
 
   std::cout << "\nSetting up Trae (" << config_dir << ")...\n";
 
-  std::cout << "\n[1/3] Skill\n";
-  try {
-    fs::path p = trae_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-
-  std::cout << "\n[2/3] Prompts\n";
   std::string prompt_path;
-  try {
-    fs::path p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
+  if (!install_skill_and_prompts(3, [&] { return trae_write_skill(config_dir); }, prompt_path)) {
     return false;
   }
 
   std::cout << "\n[3/3] Hooks\n";
-  struct HookFile {
-    const char* label;
-    const char* filename;
-    std::string_view content;
-  };
-  HookFile hook_files[] = {
-      {"Hook: prime", "prime.sh", mnemon::embedded::trae_prime_sh()},
-      {"Hook: remind", "user_prompt.sh", mnemon::embedded::trae_user_prompt_sh()},
-      {"Hook: nudge", "stop.sh", mnemon::embedded::trae_stop_sh()},
-  };
-  for (const auto& hf : hook_files) {
-    try {
-      fs::path p = trae_write_hook(config_dir, hf.filename, hf.content);
-      status_ok(hf.label, p.string());
-    } catch (const std::exception& e) {
-      status_error(hf.label, e.what());
-      return false;
-    }
-  }
-  try {
-    fs::path p = trae_register_hooks(config_dir);
-    status_updated("Hooks config", p.string());
-  } catch (const std::exception& e) {
-    status_error("Hooks config", e.what());
+  const std::array<HookFile, 3> hook_files = {
+      {{"Hook: prime", "prime.sh", mnemon::embedded::trae_prime_sh()},
+       {"Hook: remind", "user_prompt.sh", mnemon::embedded::trae_user_prompt_sh()},
+       {"Hook: nudge", "stop.sh", mnemon::embedded::trae_stop_sh()}}};
+  if (!install_hook_files(
+          hook_files, [&](const HookFile& hook) { return trae_write_hook(config_dir, hook.filename, hook.content); })) {
     return false;
   }
-
-  std::cout << "\nSetup complete!\n";
-  std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
-  std::cout << "  Hooks   " << config_dir << "/hooks.json (SessionStart, UserPromptSubmit, Stop)\n";
-  std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
-  std::cout << "Restart Trae to activate the mnemon skill and hooks.\n";
-  std::cout << "Run 'mnemon setup --eject --target trae' to remove.\n";
-  return true;
+  return finish_hook_install(config_dir, prompt_path, [&] { return trae_register_hooks(config_dir); },
+                             "Restart Trae to activate the mnemon skill and hooks.",
+                             "Run 'mnemon setup --eject --target trae' to remove.");
 }
 
 // --- qoder / qoderwork ---
 
 static void remove_qoder_hooks(nlohmann::json& data) {
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    return;
-  }
-  auto& hooks = data["hooks"];
-  static const char* keys[] = {"SessionStart", "UserPromptSubmit", "Stop",
-                               "PreToolUse",   "PostToolUse",      "PostToolUseFailure",
-                               "Notification", "PermissionRequest", "PreCompact",
-                               "SessionEnd",   "SubagentStart",     "SubagentStop"};
-  for (const char* key : keys) {
-    if (!hooks.contains(key) || !hooks[key].is_array()) {
-      continue;
-    }
-    nlohmann::json filtered = filter_hook_array(hooks[key]);
-    if (filtered.empty()) {
-      hooks.erase(key);
-    } else {
-      hooks[key] = filtered;
-    }
-  }
-  if (hooks.empty()) {
-    data.erase("hooks");
-  }
+  remove_hook_events(data,
+                     {"SessionStart", "UserPromptSubmit", "Stop", "PreToolUse", "PostToolUse",
+                      "PostToolUseFailure", "Notification", "PermissionRequest", "PreCompact", "SessionEnd",
+                      "SubagentStart", "SubagentStop"},
+                     true);
 }
 
 static void add_qoder_hook(nlohmann::json& hooks, const char* event, const std::string& command) {
@@ -2411,126 +1874,54 @@ static void add_qoder_hook(nlohmann::json& hooks, const char* event, const std::
   hooks[event].push_back(entry);
 }
 
-static void add_qoder_hooks(nlohmann::json& data, const std::string& hooks_dir) {
-  remove_qoder_hooks(data);
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    data["hooks"] = nlohmann::json::object();
-  }
-  auto& hooks = data["hooks"];
+template <typename HookRemover>
+static void add_nested_json_hooks(nlohmann::json& data, const std::string& hooks_dir, HookRemover&& remove_hooks) {
+  auto& hooks = prepare_hook_object(data, std::forward<HookRemover>(remove_hooks));
   fs::path hd = hooks_dir;
   add_qoder_hook(hooks, "SessionStart", (hd / "prime.sh").string());
   add_qoder_hook(hooks, "UserPromptSubmit", (hd / "user_prompt.sh").string());
   add_qoder_hook(hooks, "Stop", (hd / "stop.sh").string());
 }
 
-static fs::path write_qoder_skill(const std::string& config_dir, std::string_view content) {
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::create_directories(skill_dir);
-  fs::path p = skill_dir / "SKILL.md";
-  write_bytes(p, content, 0644);
-  return p;
+static void add_qoder_hooks(nlohmann::json& data, const std::string& hooks_dir) {
+  add_nested_json_hooks(data, hooks_dir, remove_qoder_hooks);
 }
 
-static fs::path qoder_write_hook(const std::string& config_dir, const std::string& filename, std::string_view content) {
-  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
-  write_bytes(hook_path, content, 0755);
-  return hook_path;
+static fs::path write_qoder_skill(const std::string& config_dir, std::string_view content) {
+  return write_skill_file(config_dir, content);
 }
 
 static fs::path register_qoder_hooks(const std::string& config_dir) {
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
-  fs::path settings_path = fs::path(config_dir) / "settings.json";
-  nlohmann::json data = read_json_file(settings_path);
-  add_qoder_hooks(data, abs_hooks_dir.string());
-  write_json_file(settings_path, data);
-  return settings_path;
+  return register_json_hooks(config_dir, "settings.json", add_qoder_hooks);
 }
 
 static int eject_qoder(const std::string& display, const std::string& config_dir) {
-  int errs = 0;
-  std::cout << "\nRemoving " << display << " integration (" << config_dir << ")...\n";
-
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  std::error_code ec;
-  fs::remove_all(hooks_dir, ec);
-  if (ec) {
-    status_error("Hooks", ec.message());
-    ++errs;
-  } else {
-    status_ok("Hooks", hooks_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "hooks");
-
-  fs::path settings_path = fs::path(config_dir) / "settings.json";
-  try {
-    nlohmann::json data = read_json_file(settings_path);
-    remove_qoder_hooks(data);
-    write_or_remove_json_file(settings_path, data);
-    status_ok("Settings", settings_path.string() + " cleaned");
-  } catch (const std::exception& e) {
-    status_error("Settings", e.what());
-    ++errs;
-  }
-
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  ec.clear();
-  fs::remove_all(skill_dir, ec);
-  if (ec) {
-    status_error("Skill", ec.message());
-    ++errs;
-  } else {
-    status_ok("Skill", skill_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "skills");
-  remove_if_empty_dir(config_dir);
-  return errs;
+  return eject_json_integration(display, config_dir, "settings.json", "Settings", remove_qoder_hooks);
 }
 
-static bool install_qoder_like(const std::string& config_dir, std::string_view skill_content,
-                               const std::string& activation, const std::string& eject_hint) {
-  std::cout << "\n[1/3] Skill\n";
-  try {
-    fs::path p = write_qoder_skill(config_dir, skill_content);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
+static std::array<HookFile, 3> qoder_hook_files() {
+  return {{{"Hook: prime", "prime.sh", mnemon::embedded::qoder_prime_sh()},
+           {"Hook: remind", "user_prompt.sh", mnemon::embedded::qoder_user_prompt_sh()},
+           {"Hook: nudge", "stop.sh", mnemon::embedded::qoder_stop_sh()}}};
+}
 
-  std::cout << "\n[2/3] Prompts\n";
+template <typename HookRegistrar>
+static bool install_qoder_like(const std::string& config_dir, std::string_view skill_content,
+                               const std::array<HookFile, 3>& hook_files, HookRegistrar&& register_hooks,
+                               const std::string& activation, const std::string& eject_hint) {
   std::string prompt_path;
-  try {
-    fs::path p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
+  if (!install_skill_and_prompts(3, [&] { return write_qoder_skill(config_dir, skill_content); }, prompt_path)) {
     return false;
   }
 
   std::cout << "\n[3/3] Hooks\n";
-  struct HookFile {
-    const char* label;
-    const char* filename;
-    std::string_view content;
-  };
-  HookFile hook_files[] = {
-      {"Hook: prime", "prime.sh", mnemon::embedded::qoder_prime_sh()},
-      {"Hook: remind", "user_prompt.sh", mnemon::embedded::qoder_user_prompt_sh()},
-      {"Hook: nudge", "stop.sh", mnemon::embedded::qoder_stop_sh()},
-  };
-  for (const auto& hf : hook_files) {
-    try {
-      fs::path p = qoder_write_hook(config_dir, hf.filename, hf.content);
-      status_ok(hf.label, p.string());
-    } catch (const std::exception& e) {
-      status_error(hf.label, e.what());
-      return false;
-    }
+  if (!install_hook_files(hook_files, [&](const HookFile& hook) {
+        return write_hook_file(config_dir, hook.filename, hook.content);
+      })) {
+    return false;
   }
   try {
-    fs::path p = register_qoder_hooks(config_dir);
+    fs::path p = register_hooks();
     status_updated("Settings", p.string());
   } catch (const std::exception& e) {
     status_error("Settings", e.what());
@@ -2559,7 +1950,9 @@ static bool install_qoder(Environment env, bool global, bool setup_yes) {
   }
 
   std::cout << "\nSetting up Qoder (" << config_dir << ")...\n";
-  return install_qoder_like(config_dir, mnemon::embedded::qoder_SKILL_md(),
+  auto hook_files = qoder_hook_files();
+  return install_qoder_like(config_dir, mnemon::embedded::qoder_SKILL_md(), hook_files,
+                            [&] { return register_qoder_hooks(config_dir); },
                             "Restart Qoder IDE/CLI to activate the mnemon skill and hooks.",
                             "Run 'mnemon setup --eject --target qoder' to remove.");
 }
@@ -2567,7 +1960,9 @@ static bool install_qoder(Environment env, bool global, bool setup_yes) {
 static bool install_qoderwork(Environment env) {
   std::string config_dir = env.config_dir;
   std::cout << "\nSetting up QoderWork (" << config_dir << ")...\n";
-  return install_qoder_like(config_dir, mnemon::embedded::qoderwork_SKILL_md(),
+  auto hook_files = qoder_hook_files();
+  return install_qoder_like(config_dir, mnemon::embedded::qoderwork_SKILL_md(), hook_files,
+                            [&] { return register_qoder_hooks(config_dir); },
                             "Restart QoderWork to activate the mnemon skill and hooks.",
                             "Run 'mnemon setup --eject --target qoderwork' to remove.");
 }
@@ -2575,104 +1970,21 @@ static bool install_qoderwork(Environment env) {
 // --- codebuddy ---
 
 static void remove_codebuddy_hooks(nlohmann::json& data) {
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    return;
-  }
-  auto& hooks = data["hooks"];
-  static const char* keys[] = {"SessionStart", "UserPromptSubmit", "Stop",      "PreToolUse", "PostToolUse",
-                               "Notification", "PreCompact",       "SessionEnd", "SubagentStop"};
-  for (const char* key : keys) {
-    if (!hooks.contains(key) || !hooks[key].is_array()) {
-      continue;
-    }
-    nlohmann::json filtered = filter_hook_array(hooks[key]);
-    if (filtered.empty()) {
-      hooks.erase(key);
-    } else {
-      hooks[key] = filtered;
-    }
-  }
-  if (hooks.empty()) {
-    data.erase("hooks");
-  }
+  remove_hook_events(data, {"SessionStart", "UserPromptSubmit", "Stop", "PreToolUse", "PostToolUse", "Notification",
+                            "PreCompact", "SessionEnd", "SubagentStop"},
+                     true);
 }
 
 static void add_codebuddy_hooks(nlohmann::json& data, const std::string& hooks_dir) {
-  remove_codebuddy_hooks(data);
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    data["hooks"] = nlohmann::json::object();
-  }
-  auto& hooks = data["hooks"];
-  fs::path hd = hooks_dir;
-  // CodeBuddy hook entries share Qoder's {type, command} nested shape.
-  add_qoder_hook(hooks, "SessionStart", (hd / "prime.sh").string());
-  add_qoder_hook(hooks, "UserPromptSubmit", (hd / "user_prompt.sh").string());
-  add_qoder_hook(hooks, "Stop", (hd / "stop.sh").string());
-}
-
-static fs::path codebuddy_write_skill(const std::string& config_dir) {
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::create_directories(skill_dir);
-  fs::path p = skill_dir / "SKILL.md";
-  write_bytes(p, mnemon::embedded::codebuddy_SKILL_md(), 0644);
-  return p;
-}
-
-static fs::path codebuddy_write_hook(const std::string& config_dir, const std::string& filename,
-                                     std::string_view content) {
-  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
-  write_bytes(hook_path, content, 0755);
-  return hook_path;
+  add_nested_json_hooks(data, hooks_dir, remove_codebuddy_hooks);
 }
 
 static fs::path codebuddy_register_hooks(const std::string& config_dir) {
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
-  fs::path settings_path = fs::path(config_dir) / "settings.json";
-  nlohmann::json data = read_json_file(settings_path);
-  add_codebuddy_hooks(data, abs_hooks_dir.string());
-  write_json_file(settings_path, data);
-  return settings_path;
+  return register_json_hooks(config_dir, "settings.json", add_codebuddy_hooks);
 }
 
 static int codebuddy_eject(const std::string& config_dir) {
-  int errs = 0;
-  std::cout << "\nRemoving CodeBuddy integration (" << config_dir << ")...\n";
-
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  std::error_code ec;
-  fs::remove_all(hooks_dir, ec);
-  if (ec) {
-    status_error("Hooks", ec.message());
-    ++errs;
-  } else {
-    status_ok("Hooks", hooks_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "hooks");
-
-  fs::path settings_path = fs::path(config_dir) / "settings.json";
-  try {
-    nlohmann::json data = read_json_file(settings_path);
-    remove_codebuddy_hooks(data);
-    write_or_remove_json_file(settings_path, data);
-    status_ok("Settings", settings_path.string() + " cleaned");
-  } catch (const std::exception& e) {
-    status_error("Settings", e.what());
-    ++errs;
-  }
-
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  ec.clear();
-  fs::remove_all(skill_dir, ec);
-  if (ec) {
-    status_error("Skill", ec.message());
-    ++errs;
-  } else {
-    status_ok("Skill", skill_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "skills");
-  remove_if_empty_dir(config_dir);
-  return errs;
+  return eject_json_integration("CodeBuddy", config_dir, "settings.json", "Settings", remove_codebuddy_hooks);
 }
 
 static bool install_codebuddy(Environment env, bool global, bool setup_yes) {
@@ -2688,165 +2000,32 @@ static bool install_codebuddy(Environment env, bool global, bool setup_yes) {
   }
 
   std::cout << "\nSetting up CodeBuddy (" << config_dir << ")...\n";
-
-  std::cout << "\n[1/3] Skill\n";
-  try {
-    fs::path p = codebuddy_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-
-  std::cout << "\n[2/3] Prompts\n";
-  std::string prompt_path;
-  try {
-    fs::path p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
-    return false;
-  }
-
-  std::cout << "\n[3/3] Hooks\n";
-  struct HookFile {
-    const char* label;
-    const char* filename;
-    std::string_view content;
-  };
-  HookFile hook_files[] = {
-      {"Hook: prime", "prime.sh", mnemon::embedded::codebuddy_prime_sh()},
-      {"Hook: remind", "user_prompt.sh", mnemon::embedded::codebuddy_user_prompt_sh()},
-      {"Hook: nudge", "stop.sh", mnemon::embedded::codebuddy_stop_sh()},
-  };
-  for (const auto& hf : hook_files) {
-    try {
-      fs::path p = codebuddy_write_hook(config_dir, hf.filename, hf.content);
-      status_ok(hf.label, p.string());
-    } catch (const std::exception& e) {
-      status_error(hf.label, e.what());
-      return false;
-    }
-  }
-  try {
-    fs::path p = codebuddy_register_hooks(config_dir);
-    status_updated("Settings", p.string());
-  } catch (const std::exception& e) {
-    status_error("Settings", e.what());
-    return false;
-  }
-
-  std::cout << "\nSetup complete!\n";
-  std::cout << "  Skill    " << config_dir << "/skills/mnemon/SKILL.md\n";
-  std::cout << "  Hooks    " << config_dir << "/settings.json (SessionStart, UserPromptSubmit, Stop)\n";
-  std::cout << "  Prompts  " << prompt_path << "/ (guide.md, skill.md)\n\n";
-  std::cout << "Restart CodeBuddy Code to activate the mnemon skill and hooks.\n";
-  std::cout << "Run 'mnemon setup --eject --target codebuddy' to remove.\n";
-  return true;
+  const std::array<HookFile, 3> hook_files = {
+      {{"Hook: prime", "prime.sh", mnemon::embedded::codebuddy_prime_sh()},
+       {"Hook: remind", "user_prompt.sh", mnemon::embedded::codebuddy_user_prompt_sh()},
+       {"Hook: nudge", "stop.sh", mnemon::embedded::codebuddy_stop_sh()}}};
+  return install_qoder_like(config_dir, mnemon::embedded::codebuddy_SKILL_md(), hook_files,
+                            [&] { return codebuddy_register_hooks(config_dir); },
+                            "Restart CodeBuddy Code to activate the mnemon skill and hooks.",
+                            "Run 'mnemon setup --eject --target codebuddy' to remove.");
 }
 
 // --- workbuddy ---
 
 static void remove_workbuddy_hooks(nlohmann::json& data) {
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    return;
-  }
-  auto& hooks = data["hooks"];
-  static const char* keys[] = {"SessionStart", "UserPromptSubmit", "Stop",      "PreToolUse", "PostToolUse",
-                               "Notification", "PreCompact",       "SessionEnd", "SubagentStop"};
-  for (const char* key : keys) {
-    if (!hooks.contains(key) || !hooks[key].is_array()) {
-      continue;
-    }
-    nlohmann::json filtered = filter_hook_array(hooks[key]);
-    if (filtered.empty()) {
-      hooks.erase(key);
-    } else {
-      hooks[key] = filtered;
-    }
-  }
-  if (hooks.empty()) {
-    data.erase("hooks");
-  }
+  remove_codebuddy_hooks(data);
 }
 
 static void add_workbuddy_hooks(nlohmann::json& data, const std::string& hooks_dir) {
-  remove_workbuddy_hooks(data);
-  if (!data.contains("hooks") || !data["hooks"].is_object()) {
-    data["hooks"] = nlohmann::json::object();
-  }
-  auto& hooks = data["hooks"];
-  fs::path hd = hooks_dir;
-  // WorkBuddy hook entries share Qoder's {type, command} nested shape.
-  add_qoder_hook(hooks, "SessionStart", (hd / "prime.sh").string());
-  add_qoder_hook(hooks, "UserPromptSubmit", (hd / "user_prompt.sh").string());
-  add_qoder_hook(hooks, "Stop", (hd / "stop.sh").string());
-}
-
-static fs::path workbuddy_write_skill(const std::string& config_dir) {
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::create_directories(skill_dir);
-  fs::path p = skill_dir / "SKILL.md";
-  write_bytes(p, mnemon::embedded::workbuddy_SKILL_md(), 0644);
-  return p;
-}
-
-static fs::path workbuddy_write_hook(const std::string& config_dir, const std::string& filename,
-                                     std::string_view content) {
-  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
-  write_bytes(hook_path, content, 0755);
-  return hook_path;
+  add_nested_json_hooks(data, hooks_dir, remove_workbuddy_hooks);
 }
 
 static fs::path workbuddy_register_hooks(const std::string& config_dir) {
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  fs::path abs_hooks_dir = fs::absolute(hooks_dir);
-  fs::path settings_path = fs::path(config_dir) / "settings.json";
-  nlohmann::json data = read_json_file(settings_path);
-  add_workbuddy_hooks(data, abs_hooks_dir.string());
-  write_json_file(settings_path, data);
-  return settings_path;
+  return register_json_hooks(config_dir, "settings.json", add_workbuddy_hooks);
 }
 
 static int workbuddy_eject(const std::string& config_dir) {
-  int errs = 0;
-  std::cout << "\nRemoving WorkBuddy integration (" << config_dir << ")...\n";
-
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
-  std::error_code ec;
-  fs::remove_all(hooks_dir, ec);
-  if (ec) {
-    status_error("Hooks", ec.message());
-    ++errs;
-  } else {
-    status_ok("Hooks", hooks_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "hooks");
-
-  fs::path settings_path = fs::path(config_dir) / "settings.json";
-  try {
-    nlohmann::json data = read_json_file(settings_path);
-    remove_workbuddy_hooks(data);
-    write_or_remove_json_file(settings_path, data);
-    status_ok("Settings", settings_path.string() + " cleaned");
-  } catch (const std::exception& e) {
-    status_error("Settings", e.what());
-    ++errs;
-  }
-
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  ec.clear();
-  fs::remove_all(skill_dir, ec);
-  if (ec) {
-    status_error("Skill", ec.message());
-    ++errs;
-  } else {
-    status_ok("Skill", skill_dir.string() + " removed");
-  }
-  remove_if_empty_dir(fs::path(config_dir) / "skills");
-  remove_if_empty_dir(config_dir);
-  return errs;
+  return eject_json_integration("WorkBuddy", config_dir, "settings.json", "Settings", remove_workbuddy_hooks);
 }
 
 static bool install_workbuddy(Environment env, bool global, bool setup_yes) {
@@ -2862,62 +2041,14 @@ static bool install_workbuddy(Environment env, bool global, bool setup_yes) {
   }
 
   std::cout << "\nSetting up WorkBuddy (" << config_dir << ")...\n";
-
-  std::cout << "\n[1/3] Skill\n";
-  try {
-    fs::path p = workbuddy_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-
-  std::cout << "\n[2/3] Prompts\n";
-  std::string prompt_path;
-  try {
-    fs::path p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
-    return false;
-  }
-
-  std::cout << "\n[3/3] Hooks\n";
-  struct HookFile {
-    const char* label;
-    const char* filename;
-    std::string_view content;
-  };
-  HookFile hook_files[] = {
-      {"Hook: prime", "prime.sh", mnemon::embedded::workbuddy_prime_sh()},
-      {"Hook: remind", "user_prompt.sh", mnemon::embedded::workbuddy_user_prompt_sh()},
-      {"Hook: nudge", "stop.sh", mnemon::embedded::workbuddy_stop_sh()},
-  };
-  for (const auto& hf : hook_files) {
-    try {
-      fs::path p = workbuddy_write_hook(config_dir, hf.filename, hf.content);
-      status_ok(hf.label, p.string());
-    } catch (const std::exception& e) {
-      status_error(hf.label, e.what());
-      return false;
-    }
-  }
-  try {
-    fs::path p = workbuddy_register_hooks(config_dir);
-    status_updated("Settings", p.string());
-  } catch (const std::exception& e) {
-    status_error("Settings", e.what());
-    return false;
-  }
-
-  std::cout << "\nSetup complete!\n";
-  std::cout << "  Skill    " << config_dir << "/skills/mnemon/SKILL.md\n";
-  std::cout << "  Hooks    " << config_dir << "/settings.json (SessionStart, UserPromptSubmit, Stop)\n";
-  std::cout << "  Prompts  " << prompt_path << "/ (guide.md, skill.md)\n\n";
-  std::cout << "Restart WorkBuddy to activate the mnemon skill and hooks.\n";
-  std::cout << "Run 'mnemon setup --eject --target workbuddy' to remove.\n";
-  return true;
+  const std::array<HookFile, 3> hook_files = {
+      {{"Hook: prime", "prime.sh", mnemon::embedded::workbuddy_prime_sh()},
+       {"Hook: remind", "user_prompt.sh", mnemon::embedded::workbuddy_user_prompt_sh()},
+       {"Hook: nudge", "stop.sh", mnemon::embedded::workbuddy_stop_sh()}}};
+  return install_qoder_like(config_dir, mnemon::embedded::workbuddy_SKILL_md(), hook_files,
+                            [&] { return workbuddy_register_hooks(config_dir); },
+                            "Restart WorkBuddy to activate the mnemon skill and hooks.",
+                            "Run 'mnemon setup --eject --target workbuddy' to remove.");
 }
 
 // --- kimi ---
@@ -3052,18 +2183,12 @@ static std::string add_kimi_hooks(const std::string& config, const std::string& 
 }
 
 static fs::path kimi_write_skill(const std::string& config_dir) {
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::create_directories(skill_dir);
-  fs::path p = skill_dir / "SKILL.md";
-  write_bytes(p, mnemon::embedded::kimi_SKILL_md(), 0644);
-  return p;
+  return write_skill_file(config_dir, mnemon::embedded::kimi_SKILL_md());
 }
 
 static fs::path kimi_write_hook(const std::string& config_dir, const std::string& filename,
                                 std::string_view content) {
-  fs::path hook_path = fs::path(config_dir) / "hooks" / "mnemon" / filename;
-  write_bytes(hook_path, content, 0755);
-  return hook_path;
+  return write_hook_file(config_dir, filename, content);
 }
 
 static fs::path kimi_register_hooks(const std::string& config_dir) {
@@ -3088,15 +2213,8 @@ static int kimi_eject(const std::string& config_dir) {
   int errs = 0;
   std::cout << "\nRemoving Kimi Code integration (" << config_dir << ")...\n";
 
-  fs::path hooks_dir = fs::path(config_dir) / "hooks" / "mnemon";
   std::error_code ec;
-  fs::remove_all(hooks_dir, ec);
-  if (ec) {
-    status_error("Hooks", ec.message());
-    ++errs;
-  } else {
-    status_ok("Hooks", hooks_dir.string() + " removed");
-  }
+  remove_integration_tree(fs::path(config_dir) / "hooks" / "mnemon", "Hooks", errs);
   remove_if_empty_dir(fs::path(config_dir) / "hooks");
 
   fs::path config_path = fs::path(config_dir) / "config.toml";
@@ -3125,15 +2243,7 @@ static int kimi_eject(const std::string& config_dir) {
     }
   }
 
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  ec.clear();
-  fs::remove_all(skill_dir, ec);
-  if (ec) {
-    status_error("Skill", ec.message());
-    ++errs;
-  } else {
-    status_ok("Skill", skill_dir.string() + " removed");
-  }
+  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs);
   remove_if_empty_dir(fs::path(config_dir) / "skills");
   remove_if_empty_dir(config_dir);
   return errs;
@@ -3144,45 +2254,19 @@ static bool install_kimi(Environment env) {
 
   std::cout << "\nSetting up Kimi Code (" << config_dir << ")...\n";
 
-  std::cout << "\n[1/3] Skill\n";
-  try {
-    fs::path p = kimi_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-
-  std::cout << "\n[2/3] Prompts\n";
   std::string prompt_path;
-  try {
-    fs::path p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
+  if (!install_skill_and_prompts(3, [&] { return kimi_write_skill(config_dir); }, prompt_path)) {
     return false;
   }
 
   std::cout << "\n[3/3] Hooks\n";
-  struct HookFile {
-    const char* label;
-    const char* filename;
-    std::string_view content;
-  };
-  HookFile hook_files[] = {
-      {"Hook: prime", "prime.sh", mnemon::embedded::kimi_prime_sh()},
-      {"Hook: remind", "user_prompt.sh", mnemon::embedded::kimi_user_prompt_sh()},
-      {"Hook: nudge", "stop.sh", mnemon::embedded::kimi_stop_sh()},
-  };
-  for (const auto& hf : hook_files) {
-    try {
-      fs::path p = kimi_write_hook(config_dir, hf.filename, hf.content);
-      status_ok(hf.label, p.string());
-    } catch (const std::exception& e) {
-      status_error(hf.label, e.what());
-      return false;
-    }
+  const std::array<HookFile, 3> hook_files = {
+      {{"Hook: prime", "prime.sh", mnemon::embedded::kimi_prime_sh()},
+       {"Hook: remind", "user_prompt.sh", mnemon::embedded::kimi_user_prompt_sh()},
+       {"Hook: nudge", "stop.sh", mnemon::embedded::kimi_stop_sh()}}};
+  if (!install_hook_files(
+          hook_files, [&](const HookFile& hook) { return kimi_write_hook(config_dir, hook.filename, hook.content); })) {
+    return false;
   }
   try {
     fs::path p = kimi_register_hooks(config_dir);
@@ -3259,11 +2343,7 @@ static void remove_opencode_empty_schema(nlohmann::json& data) {
 }
 
 static fs::path opencode_write_skill(const std::string& config_dir) {
-  fs::path skill_dir = fs::path(config_dir) / "skills" / "mnemon";
-  fs::create_directories(skill_dir);
-  fs::path p = skill_dir / "SKILL.md";
-  write_bytes(p, mnemon::embedded::opencode_SKILL_md(), 0644);
-  return p;
+  return write_skill_file(config_dir, mnemon::embedded::opencode_SKILL_md());
 }
 
 static fs::path opencode_write_plugin(const std::string& config_dir) {
@@ -3343,23 +2423,8 @@ static bool install_opencode(Environment env, bool global, bool setup_yes) {
 
   std::cout << "\nSetting up OpenCode (" << config_dir << ")...\n";
 
-  std::cout << "\n[1/3] Skill\n";
-  try {
-    fs::path p = opencode_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-
-  std::cout << "\n[2/3] Prompts\n";
   std::string prompt_path;
-  try {
-    fs::path p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
+  if (!install_skill_and_prompts(3, [&] { return opencode_write_skill(config_dir); }, prompt_path)) {
     return false;
   }
   try {
@@ -3422,23 +2487,8 @@ static bool install_claude_code(Environment env, bool global, bool setup_yes, co
 
   std::cout << "\nSetting up Claude Code (" << config_dir << ")...\n";
 
-  std::cout << "\n[1/3] Skill\n";
-  try {
-    fs::path p = claude_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-
-  std::cout << "\n[2/3] Prompts\n";
   std::string prompt_path;
-  try {
-    fs::path p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
+  if (!install_skill_and_prompts(3, [&] { return claude_write_skill(config_dir); }, prompt_path)) {
     return false;
   }
 
@@ -3512,23 +2562,8 @@ static bool install_openclaw(Environment env, bool global, bool setup_yes, const
 
   std::cout << "\nSetting up OpenClaw (" << config_dir << ")...\n";
 
-  std::cout << "\n[1/4] Skill\n";
-  try {
-    fs::path p = openclaw_write_skill(config_dir);
-    status_ok("Skill", p.string());
-  } catch (const std::exception& e) {
-    status_error("Skill", e.what());
-    return false;
-  }
-
-  std::cout << "\n[2/4] Prompts\n";
   std::string prompt_path;
-  try {
-    fs::path p = write_prompt_files();
-    status_ok("Prompts", p.string());
-    prompt_path = p.string();
-  } catch (const std::exception& e) {
-    status_error("Prompts", e.what());
+  if (!install_skill_and_prompts(4, [&] { return openclaw_write_skill(config_dir); }, prompt_path)) {
     return false;
   }
 

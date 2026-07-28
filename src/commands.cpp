@@ -252,35 +252,57 @@ static bool valid_category(const std::string& c) {
   return false;
 }
 
+static void append_trimmed(std::vector<std::string>& out, std::string& value) {
+  while (!value.empty() && value.front() == ' ') {
+    value.erase(value.begin());
+  }
+  while (!value.empty() && value.back() == ' ') {
+    value.pop_back();
+  }
+  if (!value.empty()) {
+    out.push_back(value);
+  }
+  value.clear();
+}
+
 static std::vector<std::string> split_comma(const std::string& s) {
   std::vector<std::string> out;
   std::string cur;
   for (char ch : s) {
     if (ch == ',') {
-      while (!cur.empty() && cur.front() == ' ') {
-        cur.erase(cur.begin());
-      }
-      while (!cur.empty() && cur.back() == ' ') {
-        cur.pop_back();
-      }
-      if (!cur.empty()) {
-        out.push_back(cur);
-      }
-      cur.clear();
+      append_trimmed(out, cur);
     } else {
       cur.push_back(ch);
     }
   }
-  while (!cur.empty() && cur.front() == ' ') {
-    cur.erase(cur.begin());
-  }
-  while (!cur.empty() && cur.back() == ' ') {
-    cur.pop_back();
-  }
-  if (!cur.empty()) {
-    out.push_back(cur);
-  }
+  append_trimmed(out, cur);
   return out;
+}
+
+static mnemon::search_engine::DiffOptions
+make_diff_options(const mnemon::graph_eng::EmbedCache& embed_cache, const std::vector<float>& new_embedding) {
+  std::vector<mnemon::search_engine::EmbeddedItem> items;
+  items.reserve(embed_cache.size());
+  for (const auto& [id, vec] : embed_cache) {
+    items.push_back({id, vec});
+  }
+  mnemon::search_engine::DiffOptions options;
+  options.limit = 5;
+  options.new_embedding = new_embedding;
+  options.existing_embed = std::move(items);
+  return options;
+}
+
+static void soft_delete_replaced(mnemon::Database& db, mnemon::graph_eng::EmbedCache& embed_cache,
+                                 const std::string& replaced_id, const std::string& replacement_id,
+                                 const char* operation) {
+  try {
+    db.soft_delete_insight(replaced_id);
+    db.log_op(operation, replaced_id, "replaced by " + replacement_id);
+    embed_cache.erase(replaced_id);
+  } catch (const std::exception& ex) {
+    std::cerr << "warning: soft-delete " << replaced_id << ": " << ex.what() << "\n";
+  }
 }
 
 static nlohmann::json recall_result_json(const mnemon::search_engine::RecallResult& r) {
@@ -426,14 +448,7 @@ int run_mnemon(int argc, char** argv) {
     std::string diff_action = "added";
     std::string replaced_id;
     if (!rem_no_diff) {
-      std::vector<mnemon::search_engine::EmbeddedItem> eitems;
-      for (const auto& [id, vec] : embed_cache) {
-        eitems.push_back({id, vec});
-      }
-      mnemon::search_engine::DiffOptions dopts;
-      dopts.limit = 5;
-      dopts.new_embedding = embed_vec;
-      dopts.existing_embed = std::move(eitems);
+      auto dopts = make_diff_options(embed_cache, embed_vec);
       auto dres = mnemon::search_engine::diff_insights(db->get_all_active_insights(), rem_content, dopts);
       diff_sug = dres.suggestion;
       if (dres.suggestion == mnemon::search_engine::DiffSuggestion::Duplicate) {
@@ -499,13 +514,7 @@ int run_mnemon(int argc, char** argv) {
     try {
       db->in_transaction([&] {
         if (diff_action == "updated" && !replaced_id.empty()) {
-          try {
-            db->soft_delete_insight(replaced_id);
-            db->log_op("diff-replace", replaced_id, "replaced by " + insight.id);
-            embed_cache.erase(replaced_id);
-          } catch (const std::exception& ex) {
-            std::cerr << "warning: soft-delete " << replaced_id << ": " << ex.what() << "\n";
-          }
+          soft_delete_replaced(*db, embed_cache, replaced_id, insight.id, "diff-replace");
         }
         db->insert_insight(insight);
         if (!embed_vec.empty()) {
@@ -1375,14 +1384,7 @@ int run_mnemon(int argc, char** argv) {
       if (import_no_diff) {
         action = "added";
       } else {
-        std::vector<mnemon::search_engine::EmbeddedItem> eitems;
-        for (const auto& [id, vec] : embed_cache) {
-          eitems.push_back({id, vec});
-        }
-        mnemon::search_engine::DiffOptions dopts;
-        dopts.limit = 5;
-        dopts.new_embedding = embed_vec;
-        dopts.existing_embed = std::move(eitems);
+        auto dopts = make_diff_options(embed_cache, embed_vec);
         auto all_insights = db->get_all_active_insights();
         auto dres = mnemon::search_engine::diff_insights(all_insights, insight.content, dopts);
         if (dres.suggestion == mnemon::search_engine::DiffSuggestion::Duplicate) {
@@ -1408,13 +1410,7 @@ int run_mnemon(int argc, char** argv) {
       try {
         db->in_transaction([&] {
           if (action == "updated" && !replaced_id.empty()) {
-            try {
-              db->soft_delete_insight(replaced_id);
-              db->log_op("import-replace", replaced_id, "replaced by " + insight.id);
-              embed_cache.erase(replaced_id);
-            } catch (const std::exception& ex) {
-              std::cerr << "warning: soft-delete " << replaced_id << ": " << ex.what() << "\n";
-            }
+            soft_delete_replaced(*db, embed_cache, replaced_id, insight.id, "import-replace");
           }
           db->insert_insight(insight);
           if (!embed_vec.empty()) {

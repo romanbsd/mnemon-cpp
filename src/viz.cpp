@@ -5,6 +5,7 @@
 
 #include <sstream>
 #include <unordered_set>
+#include <utility>
 
 namespace mnemon::viz {
 
@@ -48,6 +49,15 @@ static std::string edge_color(EdgeType t) {
     return "#2ecc71";
   }
   return "#cccccc";
+}
+
+static std::pair<std::string, std::string> edge_style(const Edge& edge) {
+  std::string label = edge_type_str(edge.edge_type);
+  auto subtype = edge.metadata.find("sub_type");
+  if (subtype != edge.metadata.end() && !subtype->second.empty()) {
+    label = subtype->second;
+  }
+  return {edge_color(edge.edge_type), std::move(label)};
 }
 
 static std::string dot_escape(std::string s) {
@@ -97,12 +107,7 @@ std::string render_dot(const std::vector<Insight>& insights, const std::vector<E
     if (!active.count(e.source_id) || !active.count(e.target_id)) {
       continue;
     }
-    std::string color = edge_color(e.edge_type);
-    std::string edge_label = edge_type_str(e.edge_type);
-    auto it = e.metadata.find("sub_type");
-    if (it != e.metadata.end() && !it->second.empty()) {
-      edge_label = it->second;
-    }
+    auto [color, edge_label] = edge_style(e);
     b << "  \"" << e.source_id << "\" -> \"" << e.target_id << "\" [label=\"" << dot_escape(edge_label)
       << "\", color=\"" << color << "\", fontcolor=\"" << color << "\"];\n";
   }
@@ -195,12 +200,7 @@ std::string render_html(const std::vector<Insight>& insights, const std::vector<
       edges_js << ",\n";
     }
     first = false;
-    std::string color = edge_color(e.edge_type);
-    std::string edge_label = edge_type_str(e.edge_type);
-    auto it = e.metadata.find("sub_type");
-    if (it != e.metadata.end() && !it->second.empty()) {
-      edge_label = it->second;
-    }
+    auto [color, edge_label] = edge_style(e);
     edges_js << "{from:" << js_str(e.source_id) << ",to:" << js_str(e.target_id) << ",label:" << js_str(edge_label)
              << ",color:{color:" << js_str(color) << "},arrows:\"to\",font:{color:" << js_str(color) << ",size:10}}";
   }
