@@ -1132,55 +1132,66 @@ Then `RefreshEffectiveImportance(id)`.
 
 ## 8. Embedding Subsystem (Optional)
 
-The embedding subsystem is **optional**. The binary must function fully without it. Detection is at runtime, per-invocation, with no global "Ollama mode" flag.
+The embedding subsystem is **optional**. The binary must function fully without it. Detection is at runtime,
+per invocation. Ollama is the default API; llama.cpp's OpenAI-compatible embedding API can be selected explicitly.
 
 ### 8.1 Configuration
 
 Environment variables:
 
-| Var | Default |
-|---|---|
-| `MNEMON_EMBED_ENDPOINT` | `http://localhost:11434` |
-| `MNEMON_EMBED_MODEL` | `nomic-embed-text` |
-| `MNEMON_EMBED_DIMENSIONS` | unset (use model native) |
+| Var | Default | Meaning |
+|---|---|---|
+| `MNEMON_EMBED_API` | `ollama` | `ollama` or `llama.cpp` |
+| `MNEMON_EMBED_ENDPOINT` | `http://localhost:11434` | Embedding server base URL |
+| `MNEMON_EMBED_MODEL` | `nomic-embed-text` | Model name sent to the API |
+| `MNEMON_EMBED_DIMENSIONS` | unset (use model native) | Optional positive output dimension |
 
 ### 8.2 Availability Probe
 
-```
-GET <endpoint>/api/tags
-Timeout: 2 seconds (request + body)
-Available iff status code is 200.
-```
+The availability path is `GET <endpoint>/api/tags` for Ollama and `GET <endpoint>/health` for llama.cpp.
+The timeout is 2 seconds. The service is available iff the response status is 200.
 
 The probe runs at the start of `remember`, `recall`, and `embed --status`. The 2-second cap prevents an unresponsive Ollama from blocking the CLI.
 
 ### 8.3 Embed Request
 
+Ollama:
+
 ```
 POST <endpoint>/api/embed
-Content-Type: application/json
 Body: { "model": "<model>", "input": "<text>", "dimensions": <int>? }
+Response: { "embeddings": [[<float>, ...]] }
 ```
 
-`dimensions` is included only if `MNEMON_EMBED_DIMENSIONS` is set to a positive integer (used for Matryoshka models).
+llama.cpp:
 
-Response:
 ```
-200 OK
-{ "embeddings": [[<float>, <float>, ...]] }
+POST <endpoint>/v1/embeddings
+Body: {
+  "model": "<model>",
+  "input": "search_document: <text>" | "search_query: <text>",
+  "encoding_format": "float",
+  "dimensions": <int>?
+}
+Response: { "data": [{ "embedding": [<float>, ...] }] }
 ```
 
-Take `embeddings[0]`. If the array is empty or the inner vector is empty, error `"empty embedding returned"`.
+Use the document prefix for stored insight content and the query prefix for recall queries. These prefixes are
+required by Nomic v1.5. `dimensions` is included only when `MNEMON_EMBED_DIMENSIONS` is positive. If configured,
+the response vector length must match it. Because some llama-server versions ignore the OpenAI `dimensions`
+field, a longer llama.cpp response is truncated to its leading requested dimensions; a shorter response is an
+error. The command layer normalizes the resulting vector before storage or comparison.
 
 Timeouts: 5 s connect, 30 s overall request. Disable HTTP proxy resolution (this is a localhost call by default — system proxies must not be applied or the loopback connection will be misrouted).
 
 ### 8.4 Optional, Not Required
 
-When Ollama is unavailable:
+When the selected embedding service is unavailable:
 - `remember` proceeds without embedding (no error). The new row has NULL `embedding`.
 - `recall` runs without `simScore`; rerank weights redistribute (§7.6 step 4).
-- `mnemon embed <id>` and `mnemon embed --all` error out with `Ollama not available at <endpoint> — install with: brew install ollama && ollama pull <model>`.
-- `mnemon embed --status` reports `ollama_available: false` but still emits the rest of the stats.
+- `mnemon embed <id>` and `mnemon embed --all` error with `embedding service not available at <endpoint>`.
+- `mnemon embed --status` reports `embedding_available: false` but still emits the rest of the stats.
+  It also emits the legacy `ollama_available` field with the same value for compatibility.
 
 ---
 

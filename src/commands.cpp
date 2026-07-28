@@ -362,7 +362,7 @@ int run_mnemon(int argc, char** argv) {
   app.add_option("--data-dir", g_data_dir, "base data directory (env: MNEMON_DATA_DIR)");
   app.add_option("--store", g_store_flag, "named memory store (overrides MNEMON_STORE and active file)");
   app.add_flag("--readonly", g_readonly, "open database in read-only mode");
-  app.add_option("--embed-model", g_embed_model, "Ollama embedding model (env: MNEMON_EMBED_MODEL; default: nomic-embed-text)");
+  app.add_option("--embed-model", g_embed_model, "embedding model (env: MNEMON_EMBED_MODEL; default: nomic-embed-text)");
 
   auto trunc8 = [](const std::string& id) { return id.size() > 8 ? id.substr(0, 8) : id; };
 
@@ -640,7 +640,7 @@ int run_mnemon(int argc, char** argv) {
     const bool embedding_available = oc.available();
     if (embedding_available) {
       try {
-        qvec = oc.embed(rec_query);
+        qvec = oc.embed(rec_query, mnemon::EmbedTask::Query);
         mnemon::normalize_vector(qvec);
       } catch (...) {
         qvec.clear();
@@ -899,12 +899,13 @@ int run_mnemon(int argc, char** argv) {
       print_json(nlohmann::json{{"total_insights", tot},
                                  {"embedded", emb},
                                  {"coverage", std::to_string(pct) + "%"},
+                                 {"embedding_available", embedding_available},
                                  {"ollama_available", embedding_available},
                                  {"model", oc.model}});
       return;
     }
     if (!embedding_available) {
-      throw std::runtime_error("Ollama not available at " + oc.endpoint + " — install with: brew install ollama && ollama pull " + oc.model);
+      throw std::runtime_error("embedding service not available at " + oc.endpoint);
     }
     if (!emb_id.empty()) {
       auto ins = db->get_insight_by_id(emb_id);
