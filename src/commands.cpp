@@ -244,7 +244,7 @@ static void require_non_negative_float(const char* flag, double value) {
 
 static bool valid_category(const std::string& c) {
   static const char* ok[] = {"preference", "decision", "fact", "insight", "context", "general"};
-  for (auto* x : ok) {
+  for (const char* x : ok) {
     if (c == x) {
       return true;
     }
@@ -988,11 +988,11 @@ int run_mnemon(int argc, char** argv) {
     for (const auto& e : entries) {
       std::string ins = e.insight_id;
       if (ins.size() > 8) {
-        ins = ins.substr(0, 8);
+        ins.resize(8);
       }
       std::string det = e.detail;
       if (det.size() > 60) {
-        det = det.substr(0, 57) + "...";
+        det.replace(57, std::string::npos, "...");
       }
       std::cout << e.created_at << "  " << std::left << std::setw(8) << e.operation << "  " << std::setw(8) << ins
                 << "  " << det << "\n";

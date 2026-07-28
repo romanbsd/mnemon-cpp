@@ -8,7 +8,6 @@
 namespace mnemon::search_engine {
 
 static int count_matches(const std::regex& re, const std::string& s) {
-  int n = 0;
   auto begin = std::sregex_iterator(s.begin(), s.end(), re);
   auto end = std::sregex_iterator();
   return static_cast<int>(std::distance(begin, end));

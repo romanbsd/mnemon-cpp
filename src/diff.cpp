@@ -91,9 +91,9 @@ DiffResult diff_insights(const std::vector<Insight>& insights, std::string_view 
   }
 
   std::vector<DiffMatch> matches;
-  std::vector<std::span<const float>> cand_vecs;
   std::vector<float> cand_cos;
   if (!opts.new_embedding.empty()) {
+    std::vector<std::span<const float>> cand_vecs;
     cand_vecs.reserve(candidates.size());
     for (const auto& c : candidates) {
       auto it = embed_map.find(c.insight.id);

@@ -11,7 +11,7 @@ namespace mnemon::graph_eng {
 static constexpr double kTemporalWindowHours = 24.0;
 static constexpr int kMaxProximityEdges = 10;
 
-int create_temporal_edges(Database& db, Insight& insight) {
+int create_temporal_edges(Database& db, const Insight& insight) {
   auto now = time_util::now_utc();
   int count = 0;
   auto prev = db.get_latest_insight_by_source(insight.source, insight.id);

@@ -200,7 +200,7 @@ void beam_search_from_anchor(Database& db, const std::string& start_id, double s
 }
 
 // Order results along causal edges among the candidate set; max-heap tie-break preserves high rerank scores.
-std::vector<RecallResult> causal_topological_sort(Database& db, std::vector<RecallResult> results) {
+std::vector<RecallResult> causal_topological_sort(Database& db, const std::vector<RecallResult>& results) {
   if (results.size() <= 1) {
     return results;
   }
@@ -470,7 +470,7 @@ RecallResponse intent_aware_recall(Database& db, std::string_view query, const s
   }
 
   if (intent == Intent::Why) {
-    results = causal_topological_sort(db, std::move(results));
+    results = causal_topological_sort(db, results);
   }
 
   std::string hint;

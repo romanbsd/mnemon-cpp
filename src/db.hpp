@@ -76,9 +76,9 @@ public:
   void update_entities(const std::string& id, const std::vector<std::string>& entities);
   void increment_access_count(const std::string& id);
 
-  double compute_effective_importance(int importance, int access_count, double days_since_access,
-                                      int edge_count);
-  bool is_immune(int importance, int access_count);
+  static double compute_effective_importance(int importance, int access_count, double days_since_access,
+                                             int edge_count);
+  static bool is_immune(int importance, int access_count);
   std::pair<double, bool> refresh_effective_importance(const std::string& id);
 
   std::tuple<std::vector<RetentionCandidate>, int> get_retention_candidates(double threshold, int limit);
@@ -122,10 +122,10 @@ private:
   void migrate_remove_narrative_edges();
   void migrate_embeddings_to_float32();
   void exec_sql(const char* sql);
-  Insight scan_insight_row(Statement& st);
-  std::vector<Insight> scan_insight_rows(Statement& st);
-  Edge scan_edge_row(Statement& st);
-  std::vector<Edge> scan_edge_rows(Statement& st);
+  static Insight scan_insight_row(Statement& st);
+  static std::vector<Insight> scan_insight_rows(Statement& st);
+  static Edge scan_edge_row(Statement& st);
+  static std::vector<Edge> scan_edge_rows(Statement& st);
 
   sqlite3* db_{nullptr};
   std::string path_;

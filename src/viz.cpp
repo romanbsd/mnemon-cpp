@@ -60,7 +60,7 @@ static std::pair<std::string, std::string> edge_style(const Edge& edge) {
   return {edge_color(edge.edge_type), std::move(label)};
 }
 
-static std::string dot_escape(std::string s) {
+static std::string dot_escape(const std::string& s) {
   std::string out;
   out.reserve(s.size());
   for (char ch : s) {
