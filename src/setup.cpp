@@ -110,7 +110,7 @@ static std::string clean_version(std::string v) {
   return v;
 }
 
-static std::string trim_ascii_whitespace(std::string value) {
+static std::string trim_ascii_whitespace(const std::string& value) {
   size_t begin = value.find_first_not_of(" \t\r\n");
   if (begin == std::string::npos) {
     return {};
@@ -522,7 +522,7 @@ static size_t select_one(const std::string& title, const std::vector<std::string
   return default_idx;
 }
 
-static std::string select_local_or_global_config(std::string config_dir, bool global, bool setup_yes,
+static std::string select_local_or_global_config(const std::string& config_dir, bool global, bool setup_yes,
                                                 const std::string& local_dir, const std::string& global_dir) {
   if (global || setup_yes || !is_tty_in()) {
     return config_dir;
@@ -1214,7 +1214,7 @@ static int nanobot_eject(const std::string& config_dir) {
   return errs;
 }
 
-static bool install_nanobot(Environment env, bool global, bool setup_yes) {
+static bool install_nanobot(const Environment& env, bool global, bool setup_yes) {
   std::string config_dir = env.config_dir;
   if (!global && !setup_yes && is_tty_in()) {
     std::string local_dir = ".nanobot";
@@ -1320,7 +1320,7 @@ static void remove_hermes_hooks(yaml::Value& data) {
       continue;
     }
     yaml::Value kept = yaml::Value::make_seq();
-    for (auto& entry : eit->second.seq) {
+    for (const auto& entry : eit->second.seq) {
       if (!yaml::contains_mnemon(entry)) {
         kept.seq.push_back(entry);
       }
@@ -1410,7 +1410,7 @@ static int hermes_eject(const std::string& config_dir) {
   return errs;
 }
 
-static bool install_hermes(Environment env, bool setup_yes, const RunOptions& opt) {
+static bool install_hermes(const Environment& env, bool setup_yes, const RunOptions& opt) {
   std::string config_dir = env.config_dir;
   std::cout << "\nSetting up Hermes Agent (" << config_dir << ")...\n";
 
@@ -1497,7 +1497,7 @@ static int pi_eject(const std::string& config_dir) {
   return errs;
 }
 
-static bool install_pi(Environment env, bool global, bool setup_yes) {
+static bool install_pi(const Environment& env, bool global, bool setup_yes) {
   std::string config_dir = select_local_or_global_config(
       env.config_dir, global, setup_yes, ".pi", (fs::path(home_dir()) / ".pi" / "agent").string());
   std::cout << "\nSetting up Pi (" << config_dir << ")...\n";
@@ -1566,7 +1566,7 @@ static int codex_eject(const std::string& config_dir) {
   return eject_json_integration("Codex", config_dir, "hooks.json", "Hooks config", remove_codex_hooks);
 }
 
-static bool install_codex(Environment env, bool global, bool setup_yes) {
+static bool install_codex(const Environment& env, bool global, bool setup_yes) {
   std::string config_dir = select_local_or_global_config(
       env.config_dir, global, setup_yes, ".codex", (fs::path(home_dir()) / ".codex").string());
 
@@ -1681,7 +1681,7 @@ static HookSelection select_cursor_optional_hooks(bool setup_yes) {
   return sel;
 }
 
-static bool install_cursor(Environment env, bool global, bool setup_yes) {
+static bool install_cursor(const Environment& env, bool global, bool setup_yes) {
   std::string config_dir = select_local_or_global_config(
       env.config_dir, global, setup_yes, ".cursor", (fs::path(home_dir()) / ".cursor").string());
 
@@ -1759,7 +1759,7 @@ static int trae_eject(const std::string& config_dir) {
   return eject_json_integration("Trae", config_dir, "hooks.json", "Hooks config", remove_trae_hooks);
 }
 
-static bool install_trae(Environment env, bool global, bool setup_yes) {
+static bool install_trae(const Environment& env, bool global, bool setup_yes) {
   std::string config_dir = select_local_or_global_config(
       env.config_dir, global, setup_yes, ".trae", (fs::path(home_dir()) / ".trae").string());
 
@@ -1857,7 +1857,7 @@ static bool install_qoder_like(const std::string& config_dir, std::string_view s
   return true;
 }
 
-static bool install_qoder(Environment env, bool global, bool setup_yes) {
+static bool install_qoder(const Environment& env, bool global, bool setup_yes) {
   std::string config_dir = select_local_or_global_config(
       env.config_dir, global, setup_yes, ".qoder", (fs::path(home_dir()) / ".qoder").string());
 
@@ -1869,7 +1869,7 @@ static bool install_qoder(Environment env, bool global, bool setup_yes) {
                             "Run 'mnemon setup --eject --target qoder' to remove.");
 }
 
-static bool install_qoderwork(Environment env) {
+static bool install_qoderwork(const Environment& env) {
   std::string config_dir = env.config_dir;
   std::cout << "\nSetting up QoderWork (" << config_dir << ")...\n";
   auto hook_files = qoder_hook_files();
@@ -1899,7 +1899,7 @@ static int codebuddy_eject(const std::string& config_dir) {
   return eject_json_integration("CodeBuddy", config_dir, "settings.json", "Settings", remove_codebuddy_hooks);
 }
 
-static bool install_codebuddy(Environment env, bool global, bool setup_yes) {
+static bool install_codebuddy(const Environment& env, bool global, bool setup_yes) {
   std::string config_dir = select_local_or_global_config(
       env.config_dir, global, setup_yes, ".codebuddy", (fs::path(home_dir()) / ".codebuddy").string());
 
@@ -1932,7 +1932,7 @@ static int workbuddy_eject(const std::string& config_dir) {
   return eject_json_integration("WorkBuddy", config_dir, "settings.json", "Settings", remove_workbuddy_hooks);
 }
 
-static bool install_workbuddy(Environment env, bool global, bool setup_yes) {
+static bool install_workbuddy(const Environment& env, bool global, bool setup_yes) {
   std::string config_dir = select_local_or_global_config(
       env.config_dir, global, setup_yes, ".workbuddy", (fs::path(home_dir()) / ".workbuddy").string());
 
@@ -2143,7 +2143,7 @@ static int kimi_eject(const std::string& config_dir) {
   return errs;
 }
 
-static bool install_kimi(Environment env) {
+static bool install_kimi(const Environment& env) {
   std::string config_dir = env.config_dir;
 
   std::cout << "\nSetting up Kimi Code (" << config_dir << ")...\n";
@@ -2299,7 +2299,7 @@ static int opencode_eject(const std::string& config_dir) {
   return errs;
 }
 
-static bool install_opencode(Environment env, bool global, bool setup_yes) {
+static bool install_opencode(const Environment& env, bool global, bool setup_yes) {
   std::string config_dir = env.config_dir;
   if (!global && !setup_yes && is_tty_in()) {
     std::string local_dir = ".opencode";
@@ -2360,7 +2360,7 @@ static HookSelection select_openclaw_optional_hooks(bool setup_yes) {
   return select_optional_hooks(setup_yes);
 }
 
-static bool install_claude_code(Environment env, bool global, bool setup_yes, const RunOptions& opt) {
+static bool install_claude_code(const Environment& env, bool global, bool setup_yes, const RunOptions& opt) {
   std::string config_dir = env.config_dir;
   if (!global && !setup_yes && is_tty_in()) {
     fs::path global_dir = fs::path(home_dir()) / ".claude";
@@ -2418,7 +2418,7 @@ static bool install_claude_code(Environment env, bool global, bool setup_yes, co
   return true;
 }
 
-static bool install_openclaw(Environment env, bool global, bool setup_yes, const RunOptions& opt) {
+static bool install_openclaw(const Environment& env, bool global, bool setup_yes, const RunOptions& opt) {
   std::string config_dir = env.config_dir;
   if (!global && !setup_yes && is_tty_in()) {
     fs::path global_dir = fs::path(home_dir()) / ".openclaw";
@@ -2464,7 +2464,7 @@ static bool install_openclaw(Environment env, bool global, bool setup_yes, const
   return true;
 }
 
-static bool install_env(Environment* env, bool global, bool setup_yes, const RunOptions& opt) {
+static bool install_env(const Environment* env, bool global, bool setup_yes, const RunOptions& opt) {
   if (env->name == "claude-code") {
     return install_claude_code(*env, global, setup_yes, opt);
   }
@@ -2510,7 +2510,7 @@ static bool install_env(Environment* env, bool global, bool setup_yes, const Run
   return false;
 }
 
-static int eject_env(Environment* env, bool yes) {
+static int eject_env(const Environment* env, bool yes) {
   if (env->name == "claude-code") {
     return claude_eject(env->config_dir, yes);
   }
@@ -2579,7 +2579,7 @@ static int eject_env(Environment* env, bool yes) {
 static void run_install_flow(const RunOptions& opt) {
   auto envs = detect_environments(opt.global);
   if (!opt.target.empty()) {
-    for (auto& e : envs) {
+    for (const auto& e : envs) {
       if (e.name == opt.target) {
         if (!install_env(&e, opt.global, opt.yes, opt)) {
           throw std::runtime_error("setup install failed");
@@ -2591,8 +2591,8 @@ static void run_install_flow(const RunOptions& opt) {
   }
 
   std::cout << "Detecting LLM CLI environments...\n\n";
-  std::vector<Environment*> detected;
-  for (auto& e : envs) {
+  std::vector<const Environment*> detected;
+  for (const auto& e : envs) {
     detection_line(e.detected, e.display, e.version, e.config_dir);
     if (e.detected) {
       detected.push_back(&e);
@@ -2604,12 +2604,12 @@ static void run_install_flow(const RunOptions& opt) {
     return;
   }
 
-  std::vector<Environment*> selected;
+  std::vector<const Environment*> selected;
   if (opt.yes) {
     selected = detected;
   } else if (is_tty_in()) {
     std::vector<std::string> options;
-    for (auto* e : detected) {
+    for (const Environment* e : detected) {
       options.push_back(e->display);
     }
     size_t idx = select_one("Select environment", options, 0);
@@ -2624,7 +2624,7 @@ static void run_install_flow(const RunOptions& opt) {
   }
 
   int err_count = 0;
-  for (auto* e : selected) {
+  for (const Environment* e : selected) {
     if (!install_env(e, opt.global, opt.yes, opt)) {
       ++err_count;
     }
@@ -2637,7 +2637,7 @@ static void run_install_flow(const RunOptions& opt) {
 static void run_eject_flow(const RunOptions& opt) {
   auto envs = detect_environments(opt.global);
   if (!opt.target.empty()) {
-    for (auto& e : envs) {
+    for (const auto& e : envs) {
       if (e.name == opt.target) {
         int errs = eject_env(&e, opt.yes);
         if (errs > 0) {
@@ -2650,8 +2650,8 @@ static void run_eject_flow(const RunOptions& opt) {
   }
 
   std::cout << "Detecting LLM CLI environments...\n\n";
-  std::vector<Environment*> installed;
-  for (auto& e : envs) {
+  std::vector<const Environment*> installed;
+  for (const auto& e : envs) {
     detection_line(e.detected, e.display, e.version, e.config_dir);
     if (e.detected) {
       installed.push_back(&e);
@@ -2663,12 +2663,12 @@ static void run_eject_flow(const RunOptions& opt) {
     return;
   }
 
-  std::vector<Environment*> selected;
+  std::vector<const Environment*> selected;
   if (opt.yes) {
     selected = installed;
   } else if (is_tty_in()) {
     std::vector<std::string> options;
-    for (auto* e : installed) {
+    for (const Environment* e : installed) {
       options.push_back(e->display);
     }
     size_t idx = select_one("Select environment to remove", options, 0);
@@ -2683,7 +2683,7 @@ static void run_eject_flow(const RunOptions& opt) {
   }
 
   int err_count = 0;
-  for (auto* e : selected) {
+  for (const Environment* e : selected) {
     if (eject_env(e, opt.yes) > 0) {
       ++err_count;
     }

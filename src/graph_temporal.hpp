@@ -5,6 +5,6 @@
 
 namespace mnemon::graph_eng {
 
-int create_temporal_edges(Database& db, Insight& insight);
+int create_temporal_edges(Database& db, const Insight& insight);
 
 } // namespace mnemon::graph_eng

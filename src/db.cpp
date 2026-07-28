@@ -658,7 +658,7 @@ double Database::compute_effective_importance(int importance, int access_count, 
     base = 0.15;
     break;
   }
-  double access_factor = std::log(1.0 + static_cast<double>(access_count));
+  double access_factor = std::log1p(static_cast<double>(access_count));
   if (access_factor < 1.0) {
     access_factor = 1.0;
   }

@@ -8,7 +8,7 @@ namespace mnemon::graph_eng {
 static constexpr int kMaxEntityLinks = 5;
 static constexpr int kMaxTotalEntityEdges = 50;
 
-int create_entity_edges(Database& db, Insight& insight) {
+int create_entity_edges(Database& db, const Insight& insight) {
   if (insight.entities.empty()) {
     return 0;
   }
