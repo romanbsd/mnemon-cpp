@@ -123,7 +123,9 @@ private:
   void migrate_embeddings_to_float32();
   void exec_sql(const char* sql);
   Insight scan_insight_row(Statement& st);
+  std::vector<Insight> scan_insight_rows(Statement& st);
   Edge scan_edge_row(Statement& st);
+  std::vector<Edge> scan_edge_rows(Statement& st);
 
   sqlite3* db_{nullptr};
   std::string path_;

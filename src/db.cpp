@@ -32,6 +32,18 @@ static constexpr int kTransactionBeginAttempts = 5;
 static constexpr int kOplogTrimInterval = 100;
 static constexpr int kEmbeddingFloat32UserVersion = 1;
 
+static void update_active_insight(sqlite3* db, const char* sql, const std::string& id) {
+  std::string now = time_util::rfc3339_utc(time_util::now_utc());
+  Statement st(db, sql);
+  st.bind_text(1, now);
+  st.bind_text(2, now);
+  st.bind_text(3, id);
+  st.step();
+  if (sqlite3_changes(db) == 0) {
+    throw std::runtime_error("insight " + id + " not found or already deleted");
+  }
+}
+
 // Attempts to decode `bytes` as a legacy little-endian float64 embedding blob,
 // returning std::nullopt if the length isn't a multiple of 8 or any decoded
 // value is implausible for an embedding (NaN, Inf, or magnitude over 1e6).
@@ -96,6 +108,20 @@ static std::string sqlite_readonly_uri(const fs::path& dbpath) {
     throw std::runtime_error("sqlite readonly uri: path must be absolute: " + abs.string());
   }
   return std::string("file://") + pct_encode_uri_path(p) + "?mode=ro&immutable=1";
+}
+
+static sqlite3* open_sqlite(const std::string& path, int flags, std::string_view error_context) {
+  sqlite3* db = nullptr;
+  int rc = sqlite3_open_v2(path.c_str(), &db, flags, nullptr);
+  if (rc != SQLITE_OK) {
+    std::string err = db ? sqlite3_errmsg(db) : "open";
+    if (db) {
+      sqlite3_close(db);
+    }
+    throw std::runtime_error(std::string(error_context) + ": " + err);
+  }
+  sqlite3_busy_timeout(db, 5000);
+  return db;
 }
 
 // SQLITE_DONE/ROW are success for step(); everything else becomes an exception.
@@ -250,16 +276,7 @@ static void exec_begin_immediate_with_retry(sqlite3* db) {
 std::unique_ptr<Database> Database::open_readwrite(const std::string& data_dir) {
   fs::create_directories(data_dir);
   std::string dbpath = (fs::path(data_dir) / "mnemon.db").string();
-  sqlite3* h = nullptr;
-  int rc = sqlite3_open_v2(dbpath.c_str(), &h, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
-  if (rc != SQLITE_OK) {
-    std::string err = h ? sqlite3_errmsg(h) : "open";
-    if (h) {
-      sqlite3_close(h);
-    }
-    throw std::runtime_error("open database: " + err);
-  }
-  sqlite3_busy_timeout(h, 5000);
+  sqlite3* h = open_sqlite(dbpath, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, "open database");
   auto db = std::unique_ptr<Database>(new Database(h, dbpath, false));
   db->exec_sql("PRAGMA journal_mode=WAL;");
   db->exec_sql("PRAGMA foreign_keys=ON;");
@@ -273,16 +290,7 @@ std::unique_ptr<Database> Database::open_readonly(const std::string& data_dir) {
     throw std::runtime_error("database not found: " + dbpath.string());
   }
   std::string uri = sqlite_readonly_uri(dbpath);
-  sqlite3* h = nullptr;
-  int rc = sqlite3_open_v2(uri.c_str(), &h, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nullptr);
-  if (rc != SQLITE_OK) {
-    std::string err = h ? sqlite3_errmsg(h) : "open";
-    if (h) {
-      sqlite3_close(h);
-    }
-    throw std::runtime_error("open readonly database: " + err);
-  }
-  sqlite3_busy_timeout(h, 5000);
+  sqlite3* h = open_sqlite(uri, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, "open readonly database");
   auto db = std::unique_ptr<Database>(new Database(h, dbpath.string(), true));
   db->exec_sql("PRAGMA foreign_keys=ON;");
   return db;
@@ -503,6 +511,14 @@ Insight Database::scan_insight_row(Statement& st) {
   return i;
 }
 
+std::vector<Insight> Database::scan_insight_rows(Statement& st) {
+  std::vector<Insight> rows;
+  while (st.step()) {
+    rows.push_back(scan_insight_row(st));
+  }
+  return rows;
+}
+
 Edge Database::scan_edge_row(Statement& st) {
   Edge e;
   e.source_id = st.column_text(0);
@@ -516,6 +532,14 @@ Edge Database::scan_edge_row(Statement& st) {
   parse_metadata(st.column_text(4), e.metadata);
   e.created_at = time_util::parse_rfc3339(st.column_text(5));
   return e;
+}
+
+std::vector<Edge> Database::scan_edge_rows(Statement& st) {
+  std::vector<Edge> rows;
+  while (st.step()) {
+    rows.push_back(scan_edge_row(st));
+  }
+  return rows;
 }
 
 void Database::insert_insight(const Insight& i) {
@@ -583,23 +607,13 @@ std::vector<Insight> Database::query_insights(const QueryFilter& f) {
   }
   int lim = f.limit > 0 ? f.limit : 20;
   st.bind_int(idx, lim);
-  std::vector<Insight> out;
-  while (st.step()) {
-    out.push_back(scan_insight_row(st));
-  }
-  return out;
+  return scan_insight_rows(st);
 }
 
 void Database::soft_delete_insight(const std::string& id) {
-  std::string now = time_util::rfc3339_utc(time_util::now_utc());
-  Statement st(db_, "UPDATE insights SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL");
-  st.bind_text(1, now);
-  st.bind_text(2, now);
-  st.bind_text(3, id);
-  st.step();
-  if (sqlite3_changes(db_) == 0) {
-    throw std::runtime_error("insight " + id + " not found or already deleted");
-  }
+  update_active_insight(db_, "UPDATE insights SET deleted_at = ?, updated_at = ? "
+                             "WHERE id = ? AND deleted_at IS NULL",
+                        id);
   delete_edges_by_node(id);
 }
 
@@ -845,17 +859,10 @@ int Database::auto_prune(int max_insights, const std::vector<std::string>& exclu
 }
 
 void Database::boost_retention(const std::string& id) {
-  std::string now = time_util::rfc3339_utc(time_util::now_utc());
-  Statement st(db_,
-               "UPDATE insights SET access_count = access_count + 3, last_accessed_at = ?, updated_at = ? WHERE id "
-               "= ? AND deleted_at IS NULL");
-  st.bind_text(1, now);
-  st.bind_text(2, now);
-  st.bind_text(3, id);
-  st.step();
-  if (sqlite3_changes(db_) == 0) {
-    throw std::runtime_error("insight " + id + " not found or already deleted");
-  }
+  update_active_insight(db_,
+                        "UPDATE insights SET access_count = access_count + 3, last_accessed_at = ?, updated_at = ? "
+                        "WHERE id = ? AND deleted_at IS NULL",
+                        id);
 }
 
 std::vector<Insight> Database::get_recent_insights_in_window(const std::string& exclude_id, double window_hours,
@@ -869,11 +876,7 @@ std::vector<Insight> Database::get_recent_insights_in_window(const std::string& 
   st.bind_text(1, exclude_id);
   st.bind_text(2, time_util::rfc3339_utc(cutoff));
   st.bind_int(3, limit);
-  std::vector<Insight> out;
-  while (st.step()) {
-    out.push_back(scan_insight_row(st));
-  }
-  return out;
+  return scan_insight_rows(st);
 }
 
 std::optional<Insight> Database::get_latest_insight_by_source(const std::string& source, const std::string& exclude_id) {
@@ -898,22 +901,14 @@ std::vector<Insight> Database::get_recent_insights_by_source(const std::string& 
   st.bind_text(1, source);
   st.bind_text(2, exclude_id);
   st.bind_int(3, limit);
-  std::vector<Insight> out;
-  while (st.step()) {
-    out.push_back(scan_insight_row(st));
-  }
-  return out;
+  return scan_insight_rows(st);
 }
 
 std::vector<Insight> Database::get_all_active_insights() {
   Statement st(db_,
                "SELECT id, content, category, importance, tags, entities, source, access_count, created_at, updated_at, "
                "deleted_at FROM insights WHERE deleted_at IS NULL ORDER BY created_at DESC");
-  std::vector<Insight> out;
-  while (st.step()) {
-    out.push_back(scan_insight_row(st));
-  }
-  return out;
+  return scan_insight_rows(st);
 }
 
 InsightStats Database::get_stats() {
@@ -1006,11 +1001,7 @@ std::vector<Insight> Database::get_insights_without_embedding(int limit) {
                "deleted_at FROM insights WHERE deleted_at IS NULL AND embedding IS NULL "
                "ORDER BY importance DESC, created_at DESC LIMIT ?");
   st.bind_int(1, lim);
-  std::vector<Insight> out;
-  while (st.step()) {
-    out.push_back(scan_insight_row(st));
-  }
-  return out;
+  return scan_insight_rows(st);
 }
 
 void Database::insert_edge(const Edge& e) {
@@ -1037,11 +1028,7 @@ std::vector<Edge> Database::get_edges_by_node(const std::string& node_id) {
   st.bind_text(1, node_id);
   st.bind_text(2, node_id);
   st.bind_text(3, node_id);
-  std::vector<Edge> out;
-  while (st.step()) {
-    out.push_back(scan_edge_row(st));
-  }
-  return out;
+  return scan_edge_rows(st);
 }
 
 std::vector<Edge> Database::get_edges_by_node_and_type(const std::string& node_id, EdgeType t) {
@@ -1057,11 +1044,7 @@ std::vector<Edge> Database::get_edges_by_node_and_type(const std::string& node_i
   st.bind_text(3, node_id);
   st.bind_text(4, ts);
   st.bind_text(5, node_id);
-  std::vector<Edge> out;
-  while (st.step()) {
-    out.push_back(scan_edge_row(st));
-  }
-  return out;
+  return scan_edge_rows(st);
 }
 
 std::vector<Edge> Database::get_edges_by_source_and_type(const std::string& source_id, EdgeType t) {
@@ -1070,11 +1053,7 @@ std::vector<Edge> Database::get_edges_by_source_and_type(const std::string& sour
                "AND edge_type = ?");
   st.bind_text(1, source_id);
   st.bind_text(2, edge_type_str(t));
-  std::vector<Edge> out;
-  while (st.step()) {
-    out.push_back(scan_edge_row(st));
-  }
-  return out;
+  return scan_edge_rows(st);
 }
 
 std::vector<std::string> Database::find_insights_with_entity(const std::string& entity, const std::string& exclude_id,
@@ -1109,11 +1088,7 @@ std::unordered_set<std::string> Database::load_known_entities() {
 
 std::vector<Edge> Database::get_all_edges() {
   Statement st(db_, "SELECT source_id, target_id, edge_type, weight, metadata, created_at FROM edges");
-  std::vector<Edge> out;
-  while (st.step()) {
-    out.push_back(scan_edge_row(st));
-  }
-  return out;
+  return scan_edge_rows(st);
 }
 
 void Database::delete_edge(const std::string& source_id, const std::string& target_id,
@@ -1138,11 +1113,7 @@ std::vector<Insight> Database::get_active_insights_by_source_ordered(const std::
                "deleted_at FROM insights WHERE source = ? AND deleted_at IS NULL "
                "ORDER BY created_at ASC, rowid ASC");
   st.bind_text(1, source);
-  std::vector<Insight> out;
-  while (st.step()) {
-    out.push_back(scan_insight_row(st));
-  }
-  return out;
+  return scan_insight_rows(st);
 }
 
 // Audit trail; trimmed lazily to kMaxOplogEntries. Read-only and failures are best-effort (stderr only).

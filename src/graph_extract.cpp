@@ -100,21 +100,16 @@ std::vector<std::string> extract_entities(std::string_view text_sv) {
     out.push_back(entity);
   };
 
-  for (auto it = std::sregex_iterator(text.begin(), text.end(), re_camel); it != std::sregex_iterator(); ++it) {
-    add((*it)[1].str());
-  }
-  for (auto it = std::sregex_iterator(text.begin(), text.end(), re_caps); it != std::sregex_iterator(); ++it) {
-    add((*it)[1].str());
-  }
-  for (auto it = std::sregex_iterator(text.begin(), text.end(), re_path); it != std::sregex_iterator(); ++it) {
-    add((*it)[1].str());
-  }
-  for (auto it = std::sregex_iterator(text.begin(), text.end(), re_url); it != std::sregex_iterator(); ++it) {
-    add(it->str());
-  }
-  for (auto it = std::sregex_iterator(text.begin(), text.end(), re_mention); it != std::sregex_iterator(); ++it) {
-    add((*it)[1].str());
-  }
+  auto add_matches = [&](const std::regex& pattern, size_t capture) {
+    for (auto it = std::sregex_iterator(text.begin(), text.end(), pattern); it != std::sregex_iterator(); ++it) {
+      add((*it)[capture].str());
+    }
+  };
+  add_matches(re_camel, 1);
+  add_matches(re_caps, 1);
+  add_matches(re_path, 1);
+  add_matches(re_url, 0);
+  add_matches(re_mention, 1);
   extract_cn_bracket_titles(text_sv, add);
 
   for (const auto& word : split_words(text)) {

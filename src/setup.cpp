@@ -48,6 +48,20 @@ struct HookSelection {
   bool compact = false;
 };
 
+static std::string enabled_hook_names(const HookSelection& sel, bool include_remind = true) {
+  std::string names = "prime";
+  if (include_remind && sel.remind) {
+    names += ", remind";
+  }
+  if (sel.nudge) {
+    names += ", nudge";
+  }
+  if (sel.compact) {
+    names += ", compact";
+  }
+  return names;
+}
+
 struct HookFile {
   const char* label;
   const char* filename;
@@ -65,17 +79,20 @@ static const char* c_red() { return is_tty_out() ? "\033[31m" : ""; }
 static const char* c_bold() { return is_tty_out() ? "\033[1m" : ""; }
 static const char* c_reset() { return is_tty_out() ? "\033[0m" : ""; }
 
+static void status_line(const char* color, const char* symbol, const std::string& label, const std::string& detail,
+                        const char* detail_color, const std::string& suffix = {}) {
+  std::cout << "  " << color << symbol << c_reset() << " " << std::left << std::setw(12) << label << detail_color
+            << detail << c_reset() << suffix << "\n";
+}
+
 static void status_ok(const std::string& label, const std::string& detail) {
-  std::cout << "  " << c_green() << "✓" << c_reset() << " " << std::left << std::setw(12) << label << c_dim() << detail
-            << c_reset() << "\n";
+  status_line(c_green(), "✓", label, detail, c_dim());
 }
 static void status_updated(const std::string& label, const std::string& detail) {
-  std::cout << "  " << c_green() << "✓" << c_reset() << " " << std::left << std::setw(12) << label << c_dim() << detail
-            << c_reset() << "  " << c_green() << "updated" << c_reset() << "\n";
+  status_line(c_green(), "✓", label, detail, c_dim(), std::string("  ") + c_green() + "updated" + c_reset());
 }
 static void status_error(const std::string& label, const std::string& err) {
-  std::cout << "  " << c_red() << "✗" << c_reset() << " " << std::left << std::setw(12) << label << c_red() << err
-            << c_reset() << "\n";
+  status_line(c_red(), "✗", label, err, c_red());
 }
 
 static std::string home_dir() {
@@ -326,41 +343,41 @@ static void remove_claude_hooks(nlohmann::json& data) {
   remove_hook_events(data, {"UserPromptSubmit", "Stop", "SessionStart", "PreCompact"});
 }
 
+static void append_hook_entry(nlohmann::json& hooks, const char* event, nlohmann::json entry) {
+  if (!hooks.contains(event)) {
+    hooks[event] = nlohmann::json::array();
+  }
+  hooks[event].push_back(std::move(entry));
+}
+
+static void add_command_hook(nlohmann::json& hooks, const char* event, const std::string& command, int timeout = 0,
+                             int loop_limit = 0) {
+  nlohmann::json command_entry = {{"type", "command"}, {"command", command}};
+  if (timeout > 0) {
+    command_entry["timeout"] = timeout;
+  }
+  auto entry = nlohmann::json::object();
+  entry["hooks"] = nlohmann::json::array({std::move(command_entry)});
+  if (loop_limit > 0) {
+    entry["loop_limit"] = loop_limit;
+  }
+  append_hook_entry(hooks, event, std::move(entry));
+}
+
 static void add_claude_hooks_selective(nlohmann::json& data, const std::string& hooks_dir, const HookSelection& sel) {
   auto& hooks = prepare_hook_object(data, remove_claude_hooks);
   fs::path hd = hooks_dir;
 
-  auto prime_entry = nlohmann::json::object();
-  prime_entry["hooks"] = nlohmann::json::array({{{"type", "command"}, {"command", (hd / "prime.sh").string()}}});
-  if (!hooks.contains("SessionStart")) {
-    hooks["SessionStart"] = nlohmann::json::array();
-  }
-  hooks["SessionStart"].push_back(prime_entry);
+  add_command_hook(hooks, "SessionStart", (hd / "prime.sh").string());
 
   if (sel.remind) {
-    auto remind_entry = nlohmann::json::object();
-    remind_entry["hooks"] =
-        nlohmann::json::array({{{"type", "command"}, {"command", (hd / "user_prompt.sh").string()}}});
-    if (!hooks.contains("UserPromptSubmit")) {
-      hooks["UserPromptSubmit"] = nlohmann::json::array();
-    }
-    hooks["UserPromptSubmit"].push_back(remind_entry);
+    add_command_hook(hooks, "UserPromptSubmit", (hd / "user_prompt.sh").string());
   }
   if (sel.nudge) {
-    auto nudge_entry = nlohmann::json::object();
-    nudge_entry["hooks"] = nlohmann::json::array({{{"type", "command"}, {"command", (hd / "stop.sh").string()}}});
-    if (!hooks.contains("Stop")) {
-      hooks["Stop"] = nlohmann::json::array();
-    }
-    hooks["Stop"].push_back(nudge_entry);
+    add_command_hook(hooks, "Stop", (hd / "stop.sh").string());
   }
   if (sel.compact) {
-    auto compact_entry = nlohmann::json::object();
-    compact_entry["hooks"] = nlohmann::json::array({{{"type", "command"}, {"command", (hd / "compact.sh").string()}}});
-    if (!hooks.contains("PreCompact")) {
-      hooks["PreCompact"] = nlohmann::json::array();
-    }
-    hooks["PreCompact"].push_back(compact_entry);
+    add_command_hook(hooks, "PreCompact", (hd / "compact.sh").string());
   }
 }
 
@@ -386,6 +403,16 @@ static void remove_integration_tree(const fs::path& path, const char* label, int
   }
 }
 
+static void remove_skill_tree(const std::string& config_dir, int& errs, std::string_view error_prefix = {}) {
+  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs, error_prefix);
+  remove_if_empty_dir(fs::path(config_dir) / "skills");
+}
+
+static void remove_hooks_tree(const std::string& config_dir, int& errs) {
+  remove_integration_tree(fs::path(config_dir) / "hooks" / "mnemon", "Hooks", errs);
+  remove_if_empty_dir(fs::path(config_dir) / "hooks");
+}
+
 template <typename HookRemover>
 static int eject_json_integration(std::string_view display, const std::string& config_dir,
                                   const char* config_filename, const char* config_label,
@@ -393,8 +420,7 @@ static int eject_json_integration(std::string_view display, const std::string& c
   int errs = 0;
   std::cout << "\nRemoving " << display << " integration (" << config_dir << ")...\n";
 
-  remove_integration_tree(fs::path(config_dir) / "hooks" / "mnemon", "Hooks", errs);
-  remove_if_empty_dir(fs::path(config_dir) / "hooks");
+  remove_hooks_tree(config_dir, errs);
 
   fs::path config_path = fs::path(config_dir) / config_filename;
   try {
@@ -407,8 +433,7 @@ static int eject_json_integration(std::string_view display, const std::string& c
     ++errs;
   }
 
-  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs);
-  remove_if_empty_dir(fs::path(config_dir) / "skills");
+  remove_skill_tree(config_dir, errs);
   remove_if_empty_dir(config_dir);
   return errs;
 }
@@ -495,6 +520,18 @@ static size_t select_one(const std::string& title, const std::vector<std::string
   } catch (...) {
   }
   return default_idx;
+}
+
+static std::string select_local_or_global_config(std::string config_dir, bool global, bool setup_yes,
+                                                const std::string& local_dir, const std::string& global_dir) {
+  if (global || setup_yes || !is_tty_in()) {
+    return config_dir;
+  }
+  size_t idx = select_one("Install scope",
+                          {"Local — this project only (" + local_dir + "/)",
+                           "Global — all projects (" + global_dir + "/)"},
+                          0);
+  return idx == 1 ? global_dir : local_dir;
 }
 
 static HookSelection select_multi(const std::string& title, const std::vector<std::string>& options,
@@ -778,14 +815,22 @@ static bool install_skill_and_prompts(int step_count, SkillWriter&& write_skill,
   return true;
 }
 
+template <typename PathWriter>
+static bool report_path_action(const std::string& label, PathWriter&& write_path, bool updated = false) {
+  try {
+    fs::path path = write_path();
+    updated ? status_updated(label, path.string()) : status_ok(label, path.string());
+    return true;
+  } catch (const std::exception& e) {
+    status_error(label, e.what());
+    return false;
+  }
+}
+
 template <size_t N, typename HookWriter>
 static bool install_hook_files(const std::array<HookFile, N>& hook_files, HookWriter&& write_hook) {
   for (const auto& hook : hook_files) {
-    try {
-      fs::path path = write_hook(hook);
-      status_ok(hook.label, path.string());
-    } catch (const std::exception& e) {
-      status_error(hook.label, e.what());
+    if (!report_path_action(hook.label, [&] { return write_hook(hook); })) {
       return false;
     }
   }
@@ -796,11 +841,7 @@ template <typename HookRegistrar>
 static bool finish_hook_install(const std::string& config_dir, const std::string& prompt_path,
                                 HookRegistrar&& register_hooks, std::string_view activation,
                                 std::string_view eject_hint) {
-  try {
-    fs::path path = register_hooks();
-    status_updated("Hooks config", path.string());
-  } catch (const std::exception& e) {
-    status_error("Hooks config", e.what());
+  if (!report_path_action("Hooks config", std::forward<HookRegistrar>(register_hooks), true)) {
     return false;
   }
 
@@ -1015,24 +1056,15 @@ static bool eject_memory_block(const fs::path& file_path) {
 }
 
 static void eject_markdown(const std::string& file_path, const std::string& prompt, bool yes) {
-  if (yes) {
-    try {
-      if (eject_memory_block(file_path)) {
-        std::cout << "  Memory guidance removed from " << file_path << "\n";
-      }
-    } catch (const std::exception& e) {
-      std::cerr << "  Warning: could not clean " << file_path << ": " << e.what() << "\n";
+  if (!yes && (!is_tty_in() || !confirm(prompt, true))) {
+    return;
+  }
+  try {
+    if (eject_memory_block(file_path)) {
+      std::cout << "  Memory guidance removed from " << file_path << "\n";
     }
-  } else if (is_tty_in()) {
-    if (confirm(prompt, true)) {
-      try {
-        if (eject_memory_block(file_path)) {
-          std::cout << "  Memory guidance removed from " << file_path << "\n";
-        }
-      } catch (const std::exception& e) {
-        std::cerr << "  Warning: could not clean " << file_path << ": " << e.what() << "\n";
-      }
-    }
+  } catch (const std::exception& e) {
+    std::cerr << "  Warning: could not clean " << file_path << ": " << e.what() << "\n";
   }
 }
 
@@ -1044,8 +1076,7 @@ static void eject_local_markdown(bool yes) {
 static int claude_eject(const std::string& config_dir, bool yes) {
   std::cout << "\nRemoving Claude Code integration (" << config_dir << ")...\n";
   int errs = 0;
-  remove_integration_tree(fs::path(config_dir) / "hooks" / "mnemon", "Hooks", errs);
-  remove_if_empty_dir(fs::path(config_dir) / "hooks");
+  remove_hooks_tree(config_dir, errs);
 
   fs::path settings_path = fs::path(config_dir) / "settings.json";
   try {
@@ -1058,8 +1089,7 @@ static int claude_eject(const std::string& config_dir, bool yes) {
     ++errs;
   }
 
-  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs);
-  remove_if_empty_dir(fs::path(config_dir) / "skills");
+  remove_skill_tree(config_dir, errs);
   remove_if_empty_dir(config_dir);
 
   eject_markdown("CLAUDE.md", "Remove memory guidance from ./CLAUDE.md?", yes);
@@ -1179,8 +1209,7 @@ static fs::path nanobot_write_skill(const std::string& config_dir) {
 static int nanobot_eject(const std::string& config_dir) {
   int errs = 0;
   std::cout << "\nRemoving Nanobot integration (" << config_dir << ")...\n";
-  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs, "remove failed: ");
-  remove_if_empty_dir((fs::path(config_dir) / "skills").string());
+  remove_skill_tree(config_dir, errs, "remove failed: ");
   remove_if_empty_dir(config_dir);
   return errs;
 }
@@ -1371,8 +1400,7 @@ static int hermes_eject(const std::string& config_dir) {
     ++errs;
   }
 
-  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs, "remove failed: ");
-  remove_if_empty_dir((fs::path(config_dir) / "skills").string());
+  remove_skill_tree(config_dir, errs, "remove failed: ");
 
   fs::path state_dir = fs::path(config_dir) / "mnemon";
   fs::remove_all(state_dir, ec);
@@ -1400,63 +1428,36 @@ static bool install_hermes(Environment env, bool setup_yes, const RunOptions& op
         "Compact — queue preservation guidance on session finalization",
     }, sel);
   }
-  try {
-    auto p = hermes_write_hook(config_dir, "prime.sh", mnemon::embedded::hermes_prime_sh());
-    status_ok("Hook: prime", p.string());
-  } catch (const std::exception& e) {
-    status_error("Hook: prime", e.what());
+  if (!report_path_action("Hook: prime",
+                          [&] { return hermes_write_hook(config_dir, "prime.sh", mnemon::embedded::hermes_prime_sh()); })) {
     return false;
   }
-  if (sel.remind) {
-    try {
-      auto p = hermes_write_hook(config_dir, "remind.sh", mnemon::embedded::hermes_remind_sh());
-      status_ok("Hook: remind", p.string());
-    } catch (const std::exception& e) {
-      status_error("Hook: remind", e.what());
-      return false;
-    }
+  if (sel.remind &&
+      !report_path_action("Hook: remind", [&] {
+        return hermes_write_hook(config_dir, "remind.sh", mnemon::embedded::hermes_remind_sh());
+      })) {
+    return false;
   }
-  if (sel.nudge) {
-    try {
-      auto p = hermes_write_hook(config_dir, "nudge.sh", mnemon::embedded::hermes_nudge_sh());
-      status_ok("Hook: nudge", p.string());
-    } catch (const std::exception& e) {
-      status_error("Hook: nudge", e.what());
-      return false;
-    }
+  if (sel.nudge &&
+      !report_path_action("Hook: nudge",
+                          [&] { return hermes_write_hook(config_dir, "nudge.sh", mnemon::embedded::hermes_nudge_sh()); })) {
+    return false;
   }
-  if (sel.compact) {
-    try {
-      auto p = hermes_write_hook(config_dir, "compact.sh", mnemon::embedded::hermes_compact_sh());
-      status_ok("Hook: compact", p.string());
-    } catch (const std::exception& e) {
-      status_error("Hook: compact", e.what());
-      return false;
-    }
+  if (sel.compact &&
+      !report_path_action("Hook: compact", [&] {
+        return hermes_write_hook(config_dir, "compact.sh", mnemon::embedded::hermes_compact_sh());
+      })) {
+    return false;
   }
 
   std::cout << "\n[4/4] Config\n";
-  try {
-    auto p = hermes_register_hooks(config_dir, sel);
-    status_updated("Config", p.string());
-  } catch (const std::exception& e) {
-    status_error("Config", e.what());
+  if (!report_path_action("Config", [&] { return hermes_register_hooks(config_dir, sel); }, true)) {
     return false;
-  }
-
-  std::vector<std::string> hook_names = {"prime"};
-  if (sel.remind) hook_names.push_back("remind");
-  if (sel.nudge)  hook_names.push_back("nudge");
-  if (sel.compact) hook_names.push_back("compact");
-  std::string hooks_str;
-  for (size_t i = 0; i < hook_names.size(); ++i) {
-    if (i > 0) hooks_str += ", ";
-    hooks_str += hook_names[i];
   }
 
   std::cout << "\nSetup complete!\n";
   std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
-  std::cout << "  Hooks   " << config_dir << "/config.yaml (" << hooks_str << ")\n";
+  std::cout << "  Hooks   " << config_dir << "/config.yaml (" << enabled_hook_names(sel) << ")\n";
   std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n";
   std::cout << "\nStart a new Hermes session to activate.\n";
   std::cout << "Hermes may prompt once to approve the installed shell hooks.\n";
@@ -1490,24 +1491,15 @@ static int pi_eject(const std::string& config_dir) {
   } else {
     status_ok("Extension", ext.string() + " removed");
   }
-  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs, "remove failed: ");
+  remove_skill_tree(config_dir, errs, "remove failed: ");
   remove_if_empty_dir((fs::path(config_dir) / "extensions").string());
-  remove_if_empty_dir((fs::path(config_dir) / "skills").string());
   remove_if_empty_dir(config_dir);
   return errs;
 }
 
 static bool install_pi(Environment env, bool global, bool setup_yes) {
-  std::string config_dir = env.config_dir;
-  if (!global && !setup_yes && is_tty_in()) {
-    std::string local_dir = ".pi";
-    std::string global_dir = (fs::path(home_dir()) / ".pi" / "agent").string();
-    size_t idx = select_one("Install scope", {
-        "Local — this project only (" + local_dir + "/)",
-        "Global — all projects (" + global_dir + "/)",
-    }, 0);
-    config_dir = (idx == 1) ? global_dir : local_dir;
-  }
+  std::string config_dir = select_local_or_global_config(
+      env.config_dir, global, setup_yes, ".pi", (fs::path(home_dir()) / ".pi" / "agent").string());
   std::cout << "\nSetting up Pi (" << config_dir << ")...\n";
   std::string prompt_path;
   if (!install_skill_and_prompts(3, [&] { return pi_write_skill(config_dir); }, prompt_path)) {
@@ -1545,26 +1537,17 @@ static void add_codex_hooks(nlohmann::json& data, const std::string& hooks_dir) 
   prime_entry["matcher"] = "startup|resume|clear";
   prime_entry["hooks"] = nlohmann::json::array(
       {{{"type", "command"}, {"command", (hd / "prime.sh").string()}, {"timeout", 30}, {"statusMessage", "Loading Mnemon context"}}});
-  if (!hooks.contains("SessionStart")) {
-    hooks["SessionStart"] = nlohmann::json::array();
-  }
-  hooks["SessionStart"].push_back(prime_entry);
+  append_hook_entry(hooks, "SessionStart", std::move(prime_entry));
 
   auto remind_entry = nlohmann::json::object();
   remind_entry["hooks"] = nlohmann::json::array(
       {{{"type", "command"}, {"command", (hd / "user_prompt.sh").string()}, {"timeout", 30}, {"statusMessage", "Checking Mnemon recall guidance"}}});
-  if (!hooks.contains("UserPromptSubmit")) {
-    hooks["UserPromptSubmit"] = nlohmann::json::array();
-  }
-  hooks["UserPromptSubmit"].push_back(remind_entry);
+  append_hook_entry(hooks, "UserPromptSubmit", std::move(remind_entry));
 
   auto stop_entry = nlohmann::json::object();
   stop_entry["hooks"] = nlohmann::json::array(
       {{{"type", "command"}, {"command", (hd / "stop.sh").string()}, {"timeout", 30}, {"statusMessage", "Checking Mnemon writeback guidance"}}});
-  if (!hooks.contains("Stop")) {
-    hooks["Stop"] = nlohmann::json::array();
-  }
-  hooks["Stop"].push_back(stop_entry);
+  append_hook_entry(hooks, "Stop", std::move(stop_entry));
 }
 
 static fs::path codex_write_skill(const std::string& config_dir) {
@@ -1584,16 +1567,8 @@ static int codex_eject(const std::string& config_dir) {
 }
 
 static bool install_codex(Environment env, bool global, bool setup_yes) {
-  std::string config_dir = env.config_dir;
-  if (!global && !setup_yes && is_tty_in()) {
-    std::string local_dir = ".codex";
-    std::string global_dir = (fs::path(home_dir()) / ".codex").string();
-    size_t idx = select_one("Install scope", {
-        "Local — this project only (" + local_dir + "/)",
-        "Global — all projects (" + global_dir + "/)",
-    }, 0);
-    config_dir = (idx == 1) ? global_dir : local_dir;
-  }
+  std::string config_dir = select_local_or_global_config(
+      env.config_dir, global, setup_yes, ".codex", (fs::path(home_dir()) / ".codex").string());
 
   std::cout << "\nSetting up Codex (" << config_dir << ")...\n";
 
@@ -1707,16 +1682,8 @@ static HookSelection select_cursor_optional_hooks(bool setup_yes) {
 }
 
 static bool install_cursor(Environment env, bool global, bool setup_yes) {
-  std::string config_dir = env.config_dir;
-  if (!global && !setup_yes && is_tty_in()) {
-    std::string local_dir = ".cursor";
-    std::string global_dir = (fs::path(home_dir()) / ".cursor").string();
-    size_t idx = select_one("Install scope", {
-        "Local — this project only (" + local_dir + "/)",
-        "Global — all projects (" + global_dir + "/)",
-    }, 0);
-    config_dir = (idx == 1) ? global_dir : local_dir;
-  }
+  std::string config_dir = select_local_or_global_config(
+      env.config_dir, global, setup_yes, ".cursor", (fs::path(home_dir()) / ".cursor").string());
 
   std::cout << "\nSetting up Cursor (" << config_dir << ")...\n";
 
@@ -1727,52 +1694,30 @@ static bool install_cursor(Environment env, bool global, bool setup_yes) {
 
   std::cout << "\n[3/4] Hooks\n";
   HookSelection sel = select_cursor_optional_hooks(setup_yes);
-  try {
-    fs::path p = cursor_write_hook(config_dir, "prime.sh", mnemon::embedded::cursor_prime_sh());
-    status_ok("Hook: prime", p.string());
-  } catch (const std::exception& e) {
-    status_error("Hook: prime", e.what());
+  if (!report_path_action("Hook: prime",
+                          [&] { return cursor_write_hook(config_dir, "prime.sh", mnemon::embedded::cursor_prime_sh()); })) {
     return false;
   }
-  if (sel.nudge) {
-    try {
-      fs::path p = cursor_write_hook(config_dir, "stop.sh", mnemon::embedded::cursor_stop_sh());
-      status_ok("Hook: nudge", p.string());
-    } catch (const std::exception& e) {
-      status_error("Hook: nudge", e.what());
-      return false;
-    }
+  if (sel.nudge &&
+      !report_path_action("Hook: nudge",
+                          [&] { return cursor_write_hook(config_dir, "stop.sh", mnemon::embedded::cursor_stop_sh()); })) {
+    return false;
   }
-  if (sel.compact) {
-    try {
-      fs::path p = cursor_write_hook(config_dir, "compact.sh", mnemon::embedded::cursor_compact_sh());
-      status_ok("Hook: compact", p.string());
-    } catch (const std::exception& e) {
-      status_error("Hook: compact", e.what());
-      return false;
-    }
+  if (sel.compact &&
+      !report_path_action("Hook: compact", [&] {
+        return cursor_write_hook(config_dir, "compact.sh", mnemon::embedded::cursor_compact_sh());
+      })) {
+    return false;
   }
 
   std::cout << "\n[4/4] Config\n";
-  try {
-    fs::path p = cursor_register_hooks(config_dir, sel);
-    status_updated("Hooks config", p.string());
-  } catch (const std::exception& e) {
-    status_error("Hooks config", e.what());
+  if (!report_path_action("Hooks config", [&] { return cursor_register_hooks(config_dir, sel); }, true)) {
     return false;
-  }
-
-  std::string hook_names = "prime";
-  if (sel.nudge) {
-    hook_names += ", nudge";
-  }
-  if (sel.compact) {
-    hook_names += ", compact";
   }
 
   std::cout << "\nSetup complete!\n";
   std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
-  std::cout << "  Hooks   " << config_dir << "/hooks.json (" << hook_names << ")\n";
+  std::cout << "  Hooks   " << config_dir << "/hooks.json (" << enabled_hook_names(sel, false) << ")\n";
   std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
   std::cout << "Start a new Cursor agent session to activate the mnemon skill.\n";
   std::cout << "Run 'mnemon setup --eject --target cursor' to remove.\n";
@@ -1787,15 +1732,7 @@ static void remove_trae_hooks(nlohmann::json& data) {
 }
 
 static void add_trae_hook(nlohmann::json& hooks, const char* event, int loop_limit, const std::string& command) {
-  auto entry = nlohmann::json::object();
-  entry["hooks"] = nlohmann::json::array({{{"type", "command"}, {"command", command}, {"timeout", 30}}});
-  if (loop_limit > 0) {
-    entry["loop_limit"] = loop_limit;
-  }
-  if (!hooks.contains(event)) {
-    hooks[event] = nlohmann::json::array();
-  }
-  hooks[event].push_back(entry);
+  add_command_hook(hooks, event, command, 30, loop_limit);
 }
 
 static void add_trae_hooks(nlohmann::json& data, const std::string& hooks_dir) {
@@ -1823,16 +1760,8 @@ static int trae_eject(const std::string& config_dir) {
 }
 
 static bool install_trae(Environment env, bool global, bool setup_yes) {
-  std::string config_dir = env.config_dir;
-  if (!global && !setup_yes && is_tty_in()) {
-    std::string local_dir = ".trae";
-    std::string global_dir = (fs::path(home_dir()) / ".trae").string();
-    size_t idx = select_one("Install scope", {
-        "Local — this project only (" + local_dir + "/)",
-        "Global — all projects (" + global_dir + "/)",
-    }, 0);
-    config_dir = (idx == 1) ? global_dir : local_dir;
-  }
+  std::string config_dir = select_local_or_global_config(
+      env.config_dir, global, setup_yes, ".trae", (fs::path(home_dir()) / ".trae").string());
 
   std::cout << "\nSetting up Trae (" << config_dir << ")...\n";
 
@@ -1866,12 +1795,7 @@ static void remove_qoder_hooks(nlohmann::json& data) {
 }
 
 static void add_qoder_hook(nlohmann::json& hooks, const char* event, const std::string& command) {
-  auto entry = nlohmann::json::object();
-  entry["hooks"] = nlohmann::json::array({{{"type", "command"}, {"command", command}}});
-  if (!hooks.contains(event)) {
-    hooks[event] = nlohmann::json::array();
-  }
-  hooks[event].push_back(entry);
+  add_command_hook(hooks, event, command);
 }
 
 template <typename HookRemover>
@@ -1920,11 +1844,7 @@ static bool install_qoder_like(const std::string& config_dir, std::string_view s
       })) {
     return false;
   }
-  try {
-    fs::path p = register_hooks();
-    status_updated("Settings", p.string());
-  } catch (const std::exception& e) {
-    status_error("Settings", e.what());
+  if (!report_path_action("Settings", std::forward<HookRegistrar>(register_hooks), true)) {
     return false;
   }
 
@@ -1938,16 +1858,8 @@ static bool install_qoder_like(const std::string& config_dir, std::string_view s
 }
 
 static bool install_qoder(Environment env, bool global, bool setup_yes) {
-  std::string config_dir = env.config_dir;
-  if (!global && !setup_yes && is_tty_in()) {
-    std::string local_dir = ".qoder";
-    std::string global_dir = (fs::path(home_dir()) / ".qoder").string();
-    size_t idx = select_one("Install scope", {
-        "Local — this project only (" + local_dir + "/)",
-        "Global — all projects (" + global_dir + "/)",
-    }, 0);
-    config_dir = (idx == 1) ? global_dir : local_dir;
-  }
+  std::string config_dir = select_local_or_global_config(
+      env.config_dir, global, setup_yes, ".qoder", (fs::path(home_dir()) / ".qoder").string());
 
   std::cout << "\nSetting up Qoder (" << config_dir << ")...\n";
   auto hook_files = qoder_hook_files();
@@ -1988,16 +1900,8 @@ static int codebuddy_eject(const std::string& config_dir) {
 }
 
 static bool install_codebuddy(Environment env, bool global, bool setup_yes) {
-  std::string config_dir = env.config_dir;
-  if (!global && !setup_yes && is_tty_in()) {
-    std::string local_dir = ".codebuddy";
-    std::string global_dir = (fs::path(home_dir()) / ".codebuddy").string();
-    size_t idx = select_one("Install scope", {
-        "Local — this project only (" + local_dir + "/)",
-        "Global — all projects (" + global_dir + "/)",
-    }, 0);
-    config_dir = (idx == 1) ? global_dir : local_dir;
-  }
+  std::string config_dir = select_local_or_global_config(
+      env.config_dir, global, setup_yes, ".codebuddy", (fs::path(home_dir()) / ".codebuddy").string());
 
   std::cout << "\nSetting up CodeBuddy (" << config_dir << ")...\n";
   const std::array<HookFile, 3> hook_files = {
@@ -2029,16 +1933,8 @@ static int workbuddy_eject(const std::string& config_dir) {
 }
 
 static bool install_workbuddy(Environment env, bool global, bool setup_yes) {
-  std::string config_dir = env.config_dir;
-  if (!global && !setup_yes && is_tty_in()) {
-    std::string local_dir = ".workbuddy";
-    std::string global_dir = (fs::path(home_dir()) / ".workbuddy").string();
-    size_t idx = select_one("Install scope", {
-        "Local — this project only (" + local_dir + "/)",
-        "Global — all projects (" + global_dir + "/)",
-    }, 0);
-    config_dir = (idx == 1) ? global_dir : local_dir;
-  }
+  std::string config_dir = select_local_or_global_config(
+      env.config_dir, global, setup_yes, ".workbuddy", (fs::path(home_dir()) / ".workbuddy").string());
 
   std::cout << "\nSetting up WorkBuddy (" << config_dir << ")...\n";
   const std::array<HookFile, 3> hook_files = {
@@ -2214,8 +2110,7 @@ static int kimi_eject(const std::string& config_dir) {
   std::cout << "\nRemoving Kimi Code integration (" << config_dir << ")...\n";
 
   std::error_code ec;
-  remove_integration_tree(fs::path(config_dir) / "hooks" / "mnemon", "Hooks", errs);
-  remove_if_empty_dir(fs::path(config_dir) / "hooks");
+  remove_hooks_tree(config_dir, errs);
 
   fs::path config_path = fs::path(config_dir) / "config.toml";
   std::error_code exists_ec;
@@ -2243,8 +2138,7 @@ static int kimi_eject(const std::string& config_dir) {
     }
   }
 
-  remove_integration_tree(fs::path(config_dir) / "skills" / "mnemon", "Skill", errs);
-  remove_if_empty_dir(fs::path(config_dir) / "skills");
+  remove_skill_tree(config_dir, errs);
   remove_if_empty_dir(config_dir);
   return errs;
 }
@@ -2268,11 +2162,7 @@ static bool install_kimi(Environment env) {
           hook_files, [&](const HookFile& hook) { return kimi_write_hook(config_dir, hook.filename, hook.content); })) {
     return false;
   }
-  try {
-    fs::path p = kimi_register_hooks(config_dir);
-    status_updated("Config", p.string());
-  } catch (const std::exception& e) {
-    status_error("Config", e.what());
+  if (!report_path_action("Config", [&] { return kimi_register_hooks(config_dir); }, true)) {
     return false;
   }
 
@@ -2427,11 +2317,8 @@ static bool install_opencode(Environment env, bool global, bool setup_yes) {
   if (!install_skill_and_prompts(3, [&] { return opencode_write_skill(config_dir); }, prompt_path)) {
     return false;
   }
-  try {
-    fs::path p = opencode_register_instructions(config_dir, prompt_path);
-    status_updated("Instructions", p.string());
-  } catch (const std::exception& e) {
-    status_error("Instructions", e.what());
+  if (!report_path_action("Instructions", [&] { return opencode_register_instructions(config_dir, prompt_path); },
+                          true)) {
     return false;
   }
 
@@ -2492,11 +2379,8 @@ static bool install_claude_code(Environment env, bool global, bool setup_yes, co
     return false;
   }
 
-  try {
-    fs::path p = claude_write_hook(config_dir, "prime.sh", mnemon::embedded::claude_prime_sh());
-    status_ok("Hook: prime", p.string());
-  } catch (const std::exception& e) {
-    status_error("Hook: prime", e.what());
+  if (!report_path_action("Hook: prime",
+                          [&] { return claude_write_hook(config_dir, "prime.sh", mnemon::embedded::claude_prime_sh()); })) {
     return false;
   }
 
@@ -2520,25 +2404,11 @@ static bool install_claude_code(Environment env, bool global, bool setup_yes, co
     return false;
   }
 
-  try {
-    fs::path p = claude_register_hooks(config_dir, sel);
-    status_updated("Settings", p.string());
-  } catch (const std::exception& e) {
-    status_error("Settings", e.what());
+  if (!report_path_action("Settings", [&] { return claude_register_hooks(config_dir, sel); }, true)) {
     return false;
   }
 
-  std::cout << "\nSetup complete!\n  Hooks   ";
-  std::cout << "prime";
-  if (sel.remind) {
-    std::cout << ", remind";
-  }
-  if (sel.nudge) {
-    std::cout << ", nudge";
-  }
-  if (sel.compact) {
-    std::cout << ", compact";
-  }
+  std::cout << "\nSetup complete!\n  Hooks   " << enabled_hook_names(sel);
   std::cout << "\n  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
   std::cout << "Start a new Claude Code session to activate.\n";
   std::cout << "Edit " << prompt_path << "/guide.md to customize behavior.\n";
@@ -2568,46 +2438,23 @@ static bool install_openclaw(Environment env, bool global, bool setup_yes, const
   }
 
   std::cout << "\n[3/4] Hook\n";
-  try {
-    fs::path p = openclaw_write_hook(config_dir);
-    status_ok("Hook: prime", p.string());
-  } catch (const std::exception& e) {
-    status_error("Hook: prime", e.what());
+  if (!report_path_action("Hook: prime", [&] { return openclaw_write_hook(config_dir); })) {
     return false;
   }
 
   std::cout << "\n[4/4] Plugin\n";
   HookSelection sel = select_openclaw_optional_hooks(setup_yes);
-  try {
-    fs::path p = openclaw_write_plugin(config_dir, opt.version);
-    status_ok("Plugin", p.string());
-  } catch (const std::exception& e) {
-    status_error("Plugin", e.what());
+  if (!report_path_action("Plugin", [&] { return openclaw_write_plugin(config_dir, opt.version); })) {
     return false;
   }
-  try {
-    fs::path p = openclaw_register_plugin(config_dir, sel);
-    status_updated("Config", p.string());
-  } catch (const std::exception& e) {
-    status_error("Config", e.what());
+  if (!report_path_action("Config", [&] { return openclaw_register_plugin(config_dir, sel); }, true)) {
     return false;
   }
 
   std::cout << "\nSetup complete!\n";
   std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
   std::cout << "  Hook    " << config_dir << "/hooks/mnemon-prime/ (agent:bootstrap)\n";
-  std::cout << "  Plugin  " << config_dir << "/extensions/mnemon/ (hooks: ";
-  std::cout << "prime";
-  if (sel.remind) {
-    std::cout << ", remind";
-  }
-  if (sel.nudge) {
-    std::cout << ", nudge";
-  }
-  if (sel.compact) {
-    std::cout << ", compact";
-  }
-  std::cout << ")\n";
+  std::cout << "  Plugin  " << config_dir << "/extensions/mnemon/ (hooks: " << enabled_hook_names(sel) << ")\n";
   std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
   std::cout << "Restart the OpenClaw gateway to activate.\n";
   std::cout << "Edit " << prompt_path << "/guide.md to customize behavior.\n";

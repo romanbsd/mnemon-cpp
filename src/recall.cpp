@@ -75,6 +75,19 @@ struct Anchor {
   std::string via;
 };
 
+static bool fuse_existing_anchor(std::unordered_map<std::string, Anchor>& anchors, const std::string& id,
+                                 double score) {
+  auto it = anchors.find(id);
+  if (it == anchors.end()) {
+    return false;
+  }
+  it->second.score += score;
+  if (it->second.via == "keyword" || it->second.via == "vector") {
+    it->second.via = "hybrid";
+  }
+  return true;
+}
+
 std::vector<VecHit> vector_search_from_cache(const std::unordered_map<std::string, std::vector<float>>& cache,
                                              std::span<const float> query_vec, int limit) {
   if (query_vec.empty() || limit <= 0) {
@@ -287,13 +300,7 @@ RecallResponse intent_aware_recall(Database& db, std::string_view query, const s
     auto vec_hits = vector_search_from_cache(embed_cache, query_vec, kAnchorTopK);
     for (size_t rank = 0; rank < vec_hits.size(); ++rank) {
       double rrf = 1.0 / (kRrfK + static_cast<int>(rank) + 1);
-      auto it = anchor_map.find(vec_hits[rank].id);
-      if (it != anchor_map.end()) {
-        it->second.score += rrf;
-        if (it->second.via == "keyword" || it->second.via == "vector") {
-          it->second.via = "hybrid";
-        }
-      } else {
+      if (!fuse_existing_anchor(anchor_map, vec_hits[rank].id, rrf)) {
         auto ins = db.get_insight_by_id(vec_hits[rank].id);
         if (ins) {
           anchor_map[vec_hits[rank].id] = Anchor{*ins, rrf, "vector"};
@@ -310,13 +317,7 @@ RecallResponse intent_aware_recall(Database& db, std::string_view query, const s
   for (int rank = 0; rank < time_limit; ++rank) {
     const auto& ins = time_sorted[static_cast<size_t>(rank)];
     double rrf = 1.0 / (kRrfK + rank + 1);
-    auto it = anchor_map.find(ins.id);
-    if (it != anchor_map.end()) {
-      it->second.score += rrf;
-      if (it->second.via == "keyword" || it->second.via == "vector") {
-        it->second.via = "hybrid";
-      }
-    } else {
+    if (!fuse_existing_anchor(anchor_map, ins.id, rrf)) {
       anchor_map[ins.id] = Anchor{ins, rrf, "time"};
     }
   }
