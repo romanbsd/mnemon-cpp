@@ -1,17 +1,26 @@
 #include "time_util.hpp"
 
-#include <cctype>
-#include <cstdio>
-#include <cstring>
+#include <charconv>
+#include <ctime>
 #include <stdexcept>
-
-#if defined(_WIN32)
-#include <ctime>
-#else
-#include <ctime>
-#endif
+#include <string_view>
 
 namespace mnemon::time_util {
+
+namespace {
+
+unsigned parse_component(std::string_view input, size_t offset, size_t length) {
+  unsigned value = 0;
+  const char* begin = input.data() + offset;
+  const char* end = begin + length;
+  const auto [ptr, ec] = std::from_chars(begin, end, value);
+  if (ec != std::errc{} || ptr != end) {
+    throw std::runtime_error("bad rfc3339: " + std::string(input));
+  }
+  return value;
+}
+
+} // namespace
 
 // Always UTC with Z suffix — wire format for JSON/SQLite timestamps in mnemon.
 std::string rfc3339_utc(TimePoint tp) {
@@ -31,34 +40,39 @@ std::string rfc3339_utc(TimePoint tp) {
 
 // Accepts strict RFC3339 UTC (...Z) or SQLite-style "YYYY-MM-DD HH:MM:SS" (UTC assumed).
 TimePoint parse_rfc3339(const std::string& s) {
-  unsigned y = 0, mon = 0, day = 0, h = 0, min = 0, sec = 0;
-  int n = 0;
-  if (s.ends_with('Z')) {
-    n = std::sscanf(s.c_str(), "%u-%u-%uT%u:%u:%uZ", &y, &mon, &day, &h, &min, &sec);
-  } else {
-    // +00:00 or offset — minimal support for SQLite datetime('now') style
-    n = std::sscanf(s.c_str(), "%u-%u-%u %u:%u:%u", &y, &mon, &day, &h, &min, &sec);
-  }
-  if (n != 6) {
+  const bool is_rfc3339_utc =
+      s.size() == 20 && s[4] == '-' && s[7] == '-' && s[10] == 'T' &&
+      s[13] == ':' && s[16] == ':' && s[19] == 'Z';
+  const bool is_sqlite_utc =
+      s.size() == 19 && s[4] == '-' && s[7] == '-' && s[10] == ' ' &&
+      s[13] == ':' && s[16] == ':';
+  if (!is_rfc3339_utc && !is_sqlite_utc) {
     throw std::runtime_error("bad rfc3339: " + s);
   }
-  std::tm tm{};
-  tm.tm_year = static_cast<int>(y) - 1900;
-  tm.tm_mon = static_cast<int>(mon) - 1;
-  tm.tm_mday = static_cast<int>(day);
-  tm.tm_hour = static_cast<int>(h);
-  tm.tm_min = static_cast<int>(min);
-  tm.tm_sec = static_cast<int>(sec);
-  tm.tm_isdst = 0;
-#if defined(_WIN32)
-  std::time_t t = _mkgmtime(&tm);
-#else
-  std::time_t t = timegm(&tm);
-#endif
-  if (t < 0) {
+
+  const unsigned y = parse_component(s, 0, 4);
+  const unsigned mon = parse_component(s, 5, 2);
+  const unsigned day = parse_component(s, 8, 2);
+  const unsigned h = parse_component(s, 11, 2);
+  const unsigned min = parse_component(s, 14, 2);
+  const unsigned sec = parse_component(s, 17, 2);
+  const std::chrono::year_month_day date{
+      std::chrono::year{static_cast<int>(y)},
+      std::chrono::month{mon},
+      std::chrono::day{day},
+  };
+  if (!date.ok() || h > 23 || min > 59 || sec > 59) {
     throw std::runtime_error("bad rfc3339 time: " + s);
   }
-  return std::chrono::system_clock::from_time_t(t);
+
+  const std::chrono::sys_seconds parsed =
+      std::chrono::sys_days{date} + std::chrono::hours{h} +
+      std::chrono::minutes{min} + std::chrono::seconds{sec};
+  const auto max_time = std::chrono::floor<std::chrono::seconds>(TimePoint::max());
+  if (parsed < std::chrono::sys_seconds{} || parsed > max_time) {
+    throw std::runtime_error("bad rfc3339 time: " + s);
+  }
+  return std::chrono::time_point_cast<Clock::duration>(parsed);
 }
 
 TimePoint now_utc() {

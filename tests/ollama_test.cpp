@@ -87,6 +87,20 @@ TEST_CASE("MNEMON_EMBED_API selects llama.cpp and rejects unknown values") {
   REQUIRE_THROWS(mnemon::OllamaClient::from_env());
 }
 
+TEST_CASE("MNEMON_EMBED_DIMENSIONS requires a positive integer") {
+  ScopedEnvironment api_env("MNEMON_EMBED_API");
+  ScopedEnvironment dimensions_env("MNEMON_EMBED_DIMENSIONS");
+  unsetenv("MNEMON_EMBED_API");
+
+  setenv("MNEMON_EMBED_DIMENSIONS", "384", 1);
+  REQUIRE(mnemon::OllamaClient::from_env().dimensions == 384);
+
+  for (const char* invalid : {"0", "-1", "abc", "12x", "999999999999999999999"}) {
+    setenv("MNEMON_EMBED_DIMENSIONS", invalid, 1);
+    REQUIRE_THROWS(mnemon::OllamaClient::from_env());
+  }
+}
+
 TEST_CASE("configured embedding dimensions are validated") {
   mnemon::OllamaClient client;
   client.api = mnemon::EmbedApi::LlamaCpp;

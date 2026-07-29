@@ -1465,15 +1465,10 @@ int run_mnemon(int argc, char** argv) {
           edge.weight = w;
           if (!de.reason.empty()) edge.metadata["reason"] = de.reason;
           edge.created_at = mnemon::time_util::now_utc();
-          try {
-            db->insert_edge(edge);
-            ++edges_inserted;
-            refresh_ids[src_id] = true;
-            refresh_ids[tgt_id] = true;
-          } catch (const std::exception& ex) {
-            std::cerr << "warning: insert explicit edge " << de.source_index << "->" << de.target_index
-                      << ": " << ex.what() << "\n";
-          }
+          db->insert_edge(edge);
+          ++edges_inserted;
+          refresh_ids[src_id] = true;
+          refresh_ids[tgt_id] = true;
         }
 
         // repair temporal edges for backdated imports
@@ -1500,12 +1495,10 @@ int run_mnemon(int argc, char** argv) {
               }
             }
             if (prev_existing && next_existing) {
-              try {
-                db->delete_edge(prev_existing->id, next_existing->id, mnemon::EdgeType::temporal);
-                db->delete_edge(next_existing->id, prev_existing->id, mnemon::EdgeType::temporal);
-                refresh_ids[prev_existing->id] = true;
-                refresh_ids[next_existing->id] = true;
-              } catch (...) {}
+              db->delete_edge(prev_existing->id, next_existing->id, mnemon::EdgeType::temporal);
+              db->delete_edge(next_existing->id, prev_existing->id, mnemon::EdgeType::temporal);
+              refresh_ids[prev_existing->id] = true;
+              refresh_ids[next_existing->id] = true;
             }
           }
 
@@ -1522,7 +1515,7 @@ int run_mnemon(int argc, char** argv) {
             fwd.weight = 1.0;
             fwd.metadata = {{"sub_type", "backbone"}, {"direction", "precedes"}};
             fwd.created_at = now;
-            try { db->insert_edge(fwd); } catch (...) {}
+            db->insert_edge(fwd);
             mnemon::Edge bwd;
             bwd.source_id = next.id;
             bwd.target_id = prev.id;
@@ -1530,7 +1523,7 @@ int run_mnemon(int argc, char** argv) {
             bwd.weight = 1.0;
             bwd.metadata = {{"sub_type", "backbone"}, {"direction", "succeeds"}};
             bwd.created_at = now;
-            try { db->insert_edge(bwd); } catch (...) {}
+            db->insert_edge(bwd);
             refresh_ids[prev.id] = true;
             refresh_ids[next.id] = true;
           }
@@ -1538,11 +1531,7 @@ int run_mnemon(int argc, char** argv) {
 
         // refresh EI for all touched nodes
         for (const auto& [id, _] : refresh_ids) {
-          try {
-            db->refresh_effective_importance(id);
-          } catch (const std::exception& ex) {
-            std::cerr << "warning: refresh EI for " << id << ": " << ex.what() << "\n";
-          }
+          db->refresh_effective_importance(id);
         }
 
         pruned = db->auto_prune(mnemon::kMaxInsights, {});
