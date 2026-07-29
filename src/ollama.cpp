@@ -3,9 +3,11 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <charconv>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace mnemon {
 
@@ -82,7 +84,14 @@ OllamaClient OllamaClient::from_env_with_model(const std::string& model_override
     c.model = "nomic-embed-text";
   }
   if (const char* d = std::getenv("MNEMON_EMBED_DIMENSIONS"); d && *d) {
-    c.dimensions = std::atoi(d);
+    const std::string_view value{d};
+    int dimensions = 0;
+    const auto [ptr, ec] =
+        std::from_chars(value.data(), value.data() + value.size(), dimensions);
+    if (ec != std::errc{} || ptr != value.data() + value.size() || dimensions <= 0) {
+      throw std::runtime_error("MNEMON_EMBED_DIMENSIONS must be a positive integer");
+    }
+    c.dimensions = dimensions;
   }
   if (const char* api = std::getenv("MNEMON_EMBED_API"); api && *api) {
     std::string value = api;

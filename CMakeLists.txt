@@ -182,6 +182,7 @@ if(BUILD_TESTING)
   add_executable(cpp_tests
     tests/smoke_test.cpp
     tests/ollama_test.cpp
+    tests/time_util_test.cpp
     tests/yaml_lite_test.cpp
     src/diff.cpp
     src/tokenize.cpp
@@ -189,6 +190,7 @@ if(BUILD_TESTING)
     src/vector_math.cpp
     src/model.cpp
     src/ollama.cpp
+    src/time_util.cpp
     src/uuid.cpp
     src/yaml_lite.cpp
   )
