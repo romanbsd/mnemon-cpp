@@ -105,7 +105,7 @@ endif()
 
 FetchContent_Declare(CLI11
   GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-  GIT_TAG v2.6.2
+  GIT_TAG v2.7.2
 )
 FetchContent_MakeAvailable(CLI11)
 
@@ -117,7 +117,7 @@ FetchContent_MakeAvailable(json)
 
 FetchContent_Declare(httplib
   GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-  GIT_TAG v0.51.0
+  GIT_TAG v0.52.0
 )
 FetchContent_MakeAvailable(httplib)
 
