@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=39a175e9fd9749832805c0f2750ffe2fb2bdbc00
-last_sha_subject=Merge pull request #84 from astrologist/fix/diff-conflict-clobber
-last_sha_date=2026-07-19T19:09:10+08:00
+last_sha=a035b40861baac93c94f29a9e1a3304a5ca1f832
+last_sha_subject=Merge pull request #91 from mnemon-dev/refactor/unify-test-system
+last_sha_date=2026-08-09T16:42:08+08:00
