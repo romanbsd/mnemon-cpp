@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=a4faa7249af7179ebbccdf500bfc2fb8f87a0920
-last_sha_subject=fix(store): record an oplog entry for every auto-pruned insight
-last_sha_date=2026-08-12T10:57:37+08:00
+last_sha=b1ca6594239032d6ebb1d187bd551d87c05482f0
+last_sha_subject=fix(store): let the edge table rebuild run, and survive orphaned edges
+last_sha_date=2026-08-12T11:02:43+08:00
