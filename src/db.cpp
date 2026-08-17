@@ -311,38 +311,71 @@ static void add_column_ignore_dup(sqlite3* db, const char* stmt) {
 }
 
 // Probe + migrate away from removed fifth edge type "narrative" (spec: four-graph MAGMA only).
+//
+// Foreign key enforcement is disabled for both the probe and the rebuild.
+// PRAGMA foreign_keys is a no-op inside a transaction, so it is toggled around
+// one. The pool is a single connection, so it applies to the connection doing
+// the work.
+//
+// The probe used to insert a fixed sentinel row whose endpoints don't exist;
+// with foreign_keys=ON that insert failed on the FK before the CHECK
+// constraint was even consulted, so the migration silently never ran. Random
+// ids in a rolled-back transaction avoid both that and a probe row surviving
+// a crash mid-migration and colliding with itself on the next open.
+//
+// The rebuild copies every row into a fresh table; a pre-existing dangling
+// edge (from a `.recover` after corruption, or any write made while
+// enforcement was off) would otherwise abort that copy on every open,
+// stranding the database permanently. Orphans are copied verbatim rather than
+// filtered out — dropping them would be a silent data deletion.
 void Database::migrate_remove_narrative_edges() {
-  char* err = nullptr;
-  int rc = sqlite3_exec(db_,
-                        "INSERT INTO edges VALUES ('__test','__test','narrative',0,'{}',datetime('now'))", nullptr,
-                        nullptr, &err);
-  if (rc != SQLITE_OK) {
+  exec_sql("PRAGMA foreign_keys=OFF");
+  try {
+    exec_sql("BEGIN");
+    char* err = nullptr;
+    int rc = sqlite3_exec(db_,
+                          "INSERT INTO edges VALUES ('__probe_'||hex(randomblob(8)),"
+                          "'__probe_'||hex(randomblob(8)),'narrative',0,'{}',datetime('now'))",
+                          nullptr, nullptr, &err);
     sqlite3_free(err);
-    return; // CHECK constraint already excludes narrative — nothing to do
+    exec_sql("ROLLBACK");
+    if (rc != SQLITE_OK) {
+      exec_sql("PRAGMA foreign_keys=ON");
+      return; // CHECK constraint already excludes narrative — nothing to do
+    }
+  } catch (...) {
+    exec_sql("PRAGMA foreign_keys=ON");
+    throw;
   }
-  // cleanup test row and migrate
-  in_transaction([&] {
-    exec_sql("DELETE FROM edges WHERE source_id = '__test'");
-    exec_sql("DELETE FROM edges WHERE edge_type = 'narrative'");
-    exec_sql("ALTER TABLE edges RENAME TO edges_old");
-    exec_sql(
-        "CREATE TABLE edges ("
-        "source_id   TEXT NOT NULL,"
-        "target_id   TEXT NOT NULL,"
-        "edge_type   TEXT NOT NULL CHECK(edge_type IN ('temporal','semantic','causal','entity')),"
-        "weight      REAL DEFAULT 1.0,"
-        "metadata    TEXT DEFAULT '{}',"
-        "created_at  TEXT NOT NULL,"
-        "PRIMARY KEY (source_id, target_id, edge_type),"
-        "FOREIGN KEY (source_id) REFERENCES insights(id) ON DELETE CASCADE,"
-        "FOREIGN KEY (target_id) REFERENCES insights(id) ON DELETE CASCADE"
-        ")");
-    exec_sql("INSERT INTO edges SELECT * FROM edges_old");
-    exec_sql("DROP TABLE edges_old");
-    exec_sql("CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id)");
-    exec_sql("CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id)");
-    exec_sql("CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(edge_type)");
-  });
+  try {
+    in_transaction([&] {
+      // The rolled-back probe leaves no row behind, but real legacy data can
+      // still carry 'narrative' edges — drop those before the rebuild.
+      exec_sql("DELETE FROM edges WHERE edge_type = 'narrative'");
+      exec_sql("ALTER TABLE edges RENAME TO edges_old");
+      exec_sql(
+          "CREATE TABLE edges ("
+          "source_id   TEXT NOT NULL,"
+          "target_id   TEXT NOT NULL,"
+          "edge_type   TEXT NOT NULL CHECK(edge_type IN ('temporal','semantic','causal','entity')),"
+          "weight      REAL DEFAULT 1.0,"
+          "metadata    TEXT DEFAULT '{}',"
+          "created_at  TEXT NOT NULL,"
+          "PRIMARY KEY (source_id, target_id, edge_type),"
+          "FOREIGN KEY (source_id) REFERENCES insights(id) ON DELETE CASCADE,"
+          "FOREIGN KEY (target_id) REFERENCES insights(id) ON DELETE CASCADE"
+          ")");
+      exec_sql("INSERT INTO edges SELECT * FROM edges_old");
+      exec_sql("DROP TABLE edges_old");
+      exec_sql("CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id)");
+      exec_sql("CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id)");
+      exec_sql("CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(edge_type)");
+    });
+  } catch (...) {
+    exec_sql("PRAGMA foreign_keys=ON");
+    throw;
+  }
+  exec_sql("PRAGMA foreign_keys=ON");
 }
 
 // One-time rewrite of legacy little-endian float64 embedding blobs (8 bytes/dim)
@@ -846,6 +879,11 @@ int Database::auto_prune(int max_insights, const std::vector<std::string>& exclu
       u.step();
       if (sqlite3_changes(db_) > 0) {
         delete_edges_by_node(id);
+        // Auto-prune is the only destructive path that leaves no trace otherwise —
+        // every other write the CLI makes (remember, forget, link, import, embed)
+        // records an oplog entry.
+        log_op("prune", id, "auto-prune: over capacity (active=" + std::to_string(total) +
+                                 ", max=" + std::to_string(max_insights) + ")");
         pruned++;
       }
     }

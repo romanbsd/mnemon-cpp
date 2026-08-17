@@ -184,11 +184,14 @@ if(BUILD_TESTING)
     tests/ollama_test.cpp
     tests/time_util_test.cpp
     tests/yaml_lite_test.cpp
+    tests/db_test.cpp
     src/diff.cpp
     src/tokenize.cpp
     src/keyword.cpp
     src/vector_math.cpp
     src/model.cpp
+    src/model_json.cpp
+    src/db.cpp
     src/ollama.cpp
     src/time_util.cpp
     src/uuid.cpp
@@ -196,7 +199,7 @@ if(BUILD_TESTING)
   )
   target_include_directories(cpp_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
   target_include_directories(cpp_tests PRIVATE "${httplib_SOURCE_DIR}")
-  target_link_libraries(cpp_tests PRIVATE Catch2::Catch2WithMain nlohmann_json::nlohmann_json Threads::Threads)
+  target_link_libraries(cpp_tests PRIVATE Catch2::Catch2WithMain nlohmann_json::nlohmann_json sqlite3 Threads::Threads)
   if(APPLE)
     target_link_libraries(cpp_tests PRIVATE "-framework Accelerate")
   endif()

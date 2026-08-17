@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=a035b40861baac93c94f29a9e1a3304a5ca1f832
-last_sha_subject=Merge pull request #91 from mnemon-dev/refactor/unify-test-system
-last_sha_date=2026-08-09T16:42:08+08:00
+last_sha=a4faa7249af7179ebbccdf500bfc2fb8f87a0920
+last_sha_subject=fix(store): record an oplog entry for every auto-pruned insight
+last_sha_date=2026-08-12T10:57:37+08:00
