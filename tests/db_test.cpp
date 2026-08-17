@@ -6,11 +6,9 @@
 
 #include <sqlite3.h>
 
-#include <cstdlib>
 #include <filesystem>
+#include <random>
 #include <string>
-#include <unistd.h>
-#include <vector>
 
 using namespace mnemon;
 namespace fs = std::filesystem;
@@ -21,13 +19,36 @@ namespace {
 // an oplog entry) and b1ca65942390 (narrative-edge migration masked by FK
 // enforcement, aborted by orphaned edges).
 
-std::string make_temp_dir() {
-  std::string tmpl = (fs::temp_directory_path() / "mnemon_db_test_XXXXXX").string();
-  std::vector<char> buf(tmpl.begin(), tmpl.end());
-  buf.push_back('\0');
-  REQUIRE(mkdtemp(buf.data()) != nullptr);
-  return std::string(buf.data());
-}
+// Self-cleaning temp directory. std::filesystem (not POSIX mkdtemp) keeps
+// this test target portable to MSVC, where cpp_tests also builds.
+struct TempDir {
+  fs::path path;
+
+  TempDir() {
+    auto base = fs::temp_directory_path();
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    for (int attempt = 0; attempt < 100; ++attempt) {
+      auto candidate = base / ("mnemon_db_test_" + std::to_string(gen()));
+      std::error_code ec;
+      if (fs::create_directory(candidate, ec)) {
+        path = candidate;
+        return;
+      }
+    }
+    FAIL("could not create a unique temp directory under " << base);
+  }
+
+  ~TempDir() {
+    std::error_code ec;
+    fs::remove_all(path, ec);
+  }
+
+  TempDir(const TempDir&) = delete;
+  TempDir& operator=(const TempDir&) = delete;
+
+  std::string string() const { return path.string(); }
+};
 
 Insight make_insight(const std::string& id) {
   Insight ins;
@@ -47,11 +68,20 @@ void exec_or_fail(sqlite3* db, const char* sql) {
   (void)msg;
 }
 
+int count_rows(sqlite3* db, const char* sql) {
+  sqlite3_stmt* st = nullptr;
+  REQUIRE(sqlite3_prepare_v2(db, sql, -1, &st, nullptr) == SQLITE_OK);
+  REQUIRE(sqlite3_step(st) == SQLITE_ROW);
+  int n = sqlite3_column_int(st, 0);
+  sqlite3_finalize(st);
+  return n;
+}
+
 } // namespace
 
 TEST_CASE("auto_prune records an oplog entry for every pruned insight") {
-  auto dir = make_temp_dir();
-  auto db = Database::open_readwrite(dir);
+  TempDir dir;
+  auto db = Database::open_readwrite(dir.string());
 
   for (int i = 0; i < 5; ++i) {
     db->insert_insight(make_insight("audit-" + std::to_string(i)));
@@ -72,13 +102,13 @@ TEST_CASE("auto_prune records an oplog entry for every pruned insight") {
 }
 
 TEST_CASE("narrative-edge migration survives orphaned edges and actually runs under FK enforcement") {
-  auto dir = make_temp_dir();
-  std::string dbpath = dir + "/mnemon.db";
+  TempDir dir;
+  std::string dbpath = dir.string() + "/mnemon.db";
 
   // Seed a legacy database on disk: edges CHECK constraint still admits the
-  // removed 'narrative' type, plus an edge whose target row does not exist
-  // (the kind of damage a `.recover` or a write made with FK enforcement off
-  // leaves behind).
+  // removed 'narrative' type, plus a legacy narrative edge itself, plus an
+  // edge whose target row does not exist (the kind of damage a `.recover` or
+  // a write made with FK enforcement off leaves behind).
   sqlite3* raw = nullptr;
   REQUIRE(sqlite3_open(dbpath.c_str(), &raw) == SQLITE_OK);
   exec_or_fail(raw, "PRAGMA foreign_keys=OFF");
@@ -123,27 +153,30 @@ CREATE TABLE oplog (
                "INSERT INTO insights VALUES ('narr-src','content','general',3,'[]','[]','user',0,"
                "datetime('now'),datetime('now'),NULL)");
   exec_or_fail(raw,
+               "INSERT INTO edges VALUES ('narr-src','narr-src','narrative',1,'{}','2026-01-01T00:00:00Z')");
+  exec_or_fail(raw,
                "INSERT INTO edges VALUES ('narr-src','vanished','semantic',0.5,'{}','2026-01-01T00:00:00Z')");
   sqlite3_close(raw);
 
   // Reopening through Database runs migrate(); it must not be blocked by the
   // orphaned edge, and the FK-masked probe must no longer skip the rebuild.
-  auto db = Database::open_readwrite(dir);
+  auto db = Database::open_readwrite(dir.string());
   db.reset(); // release the connection before inspecting the file directly
 
   sqlite3* verify = nullptr;
   REQUIRE(sqlite3_open(dbpath.c_str(), &verify) == SQLITE_OK);
 
+  // The legacy narrative edge must have been dropped by the migration.
+  REQUIRE(count_rows(verify, "SELECT COUNT(*) FROM edges WHERE edge_type='narrative'") == 0);
+
+  // And the CHECK constraint must now reject the type outright.
   int rc = sqlite3_exec(
       verify, "INSERT INTO edges VALUES ('narr-src','narr-src','narrative',1,'{}','2026-01-01T00:00:00Z')", nullptr,
       nullptr, nullptr);
   REQUIRE(rc != SQLITE_OK); // narrative edge type must be rejected after migration
 
-  sqlite3_stmt* st = nullptr;
-  REQUIRE(sqlite3_prepare_v2(verify, "SELECT COUNT(*) FROM edges WHERE target_id='vanished'", -1, &st, nullptr) ==
-          SQLITE_OK);
-  REQUIRE(sqlite3_step(st) == SQLITE_ROW);
-  REQUIRE(sqlite3_column_int(st, 0) == 1); // orphaned edge survived the rebuild verbatim
-  sqlite3_finalize(st);
+  // The orphaned edge survived the rebuild verbatim.
+  REQUIRE(count_rows(verify, "SELECT COUNT(*) FROM edges WHERE target_id='vanished'") == 1);
+
   sqlite3_close(verify);
 }
