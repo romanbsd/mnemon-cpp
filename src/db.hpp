@@ -4,6 +4,7 @@
 #include "model.hpp"
 
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -17,6 +18,14 @@ namespace mnemon {
 
 inline constexpr double kHalfLifeDays = 30.0;
 inline constexpr int kMaxInsights = 1000;
+// Ceiling returned by max_insights_limit() when auto-pruning is switched off.
+// No store reaches it, so auto_prune's capacity check never trips.
+inline constexpr int kMaxInsightsUnlimited = std::numeric_limits<int>::max();
+
+// Active auto-prune capacity ceiling. Resolution: MNEMON_MAX_INSIGHTS > kMaxInsights.
+// A value of 0 or below switches auto-pruning off (returns kMaxInsightsUnlimited);
+// an unparseable value warns on stderr and is ignored. Resolved at call time.
+int max_insights_limit();
 inline constexpr int kPruneBatchSize = 10;
 inline constexpr int kMaxOplogEntries = 5000;
 

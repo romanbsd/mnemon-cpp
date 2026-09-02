@@ -882,6 +882,41 @@ fi
 
 
 # ══════════════════════════════════════════════════════════════════════
+banner "Configurable Auto-Prune Ceiling (MNEMON_MAX_INSIGHTS)"
+# ══════════════════════════════════════════════════════════════════════
+
+TESTDIRMAX="$TESTDATA/maxins"
+mkdir -p "$TESTDIRMAX"
+
+step "gc — default ceiling is 1000"
+OUT=$($M --data-dir "$TESTDIRMAX" gc --threshold 0.7)
+assert_jq "default max_insights=1000" "$OUT" '.max_insights' '1000'
+
+step "gc — MNEMON_MAX_INSIGHTS overrides the ceiling"
+OUT=$(MNEMON_MAX_INSIGHTS=7 $M --data-dir "$TESTDIRMAX" gc --threshold 0.7)
+assert_jq "override max_insights=7" "$OUT" '.max_insights' '7'
+
+step "gc — MNEMON_MAX_INSIGHTS=0 reports unlimited as 0"
+OUT=$(MNEMON_MAX_INSIGHTS=0 $M --data-dir "$TESTDIRMAX" gc --threshold 0.7)
+assert_jq "unlimited max_insights=0" "$OUT" '.max_insights' '0'
+
+step "remember — small ceiling prunes older low-importance insights"
+TESTDIRMAX2="$TESTDATA/maxins2"
+mkdir -p "$TESTDIRMAX2"
+OUT=$(MNEMON_MAX_INSIGHTS=1 $M --data-dir "$TESTDIRMAX2" remember --no-diff "Ceiling note A" --cat general --imp 1)
+assert_jq "first insert under cap prunes nothing" "$OUT" '.auto_pruned' '0'
+OUT=$(MNEMON_MAX_INSIGHTS=1 $M --data-dir "$TESTDIRMAX2" remember --no-diff "Ceiling note B" --cat general --imp 1)
+assert_jq "second insert over cap prunes one" "$OUT" '.auto_pruned' '1'
+
+step "remember — MNEMON_MAX_INSIGHTS=0 disables pruning"
+TESTDIRMAX3="$TESTDATA/maxins3"
+mkdir -p "$TESTDIRMAX3"
+MNEMON_MAX_INSIGHTS=0 $M --data-dir "$TESTDIRMAX3" remember --no-diff "Unlimited note A" --cat general --imp 1 > /dev/null
+OUT=$(MNEMON_MAX_INSIGHTS=0 $M --data-dir "$TESTDIRMAX3" remember --no-diff "Unlimited note B" --cat general --imp 1)
+assert_jq "no pruning when unlimited" "$OUT" '.auto_pruned' '0'
+
+
+# ══════════════════════════════════════════════════════════════════════
 banner "Milestone 11: Smart Recall Reranking + Signals"
 # ══════════════════════════════════════════════════════════════════════
 

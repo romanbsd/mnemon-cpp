@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=2dc6304ac21550aca93659751f682045a05bba8d
-last_sha_subject=Merge pull request #106 from mnemon-dev/fix/windows-release-artifacts
-last_sha_date=2026-08-16T13:42:10+08:00
+last_sha=f30d72bd254c0be34c96a09f233b1565c7b44564
+last_sha_subject=feat(memory): make the auto-prune insight ceiling configurable
+last_sha_date=2026-08-19T02:59:24-07:00
