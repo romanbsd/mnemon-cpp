@@ -5,7 +5,7 @@ RUN apk add --no-cache --virtual .build-deps \
         build-base \
         clang19 \
         llvm19-dev \
-    && git clone --depth 1 --branch v0.8.1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+    && git clone --depth 1 --branch v0.8.6 https://github.com/pgvector/pgvector.git /tmp/pgvector \
     && make -C /tmp/pgvector \
     && make -C /tmp/pgvector install \
     && apk del .build-deps \
