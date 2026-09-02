@@ -882,6 +882,74 @@ fi
 
 
 # ══════════════════════════════════════════════════════════════════════
+banner "Configurable Auto-Prune Ceiling (MNEMON_MAX_INSIGHTS)"
+# ══════════════════════════════════════════════════════════════════════
+
+TESTDIRMAX="$TESTDATA/maxins"
+mkdir -p "$TESTDIRMAX"
+
+step "gc — default ceiling is 1000"
+# env -u: clear any inherited MNEMON_MAX_INSIGHTS so the built-in default is tested.
+OUT=$(env -u MNEMON_MAX_INSIGHTS $M --data-dir "$TESTDIRMAX" gc --threshold 0.7)
+assert_jq "default max_insights=1000" "$OUT" '.max_insights' '1000'
+
+step "gc — MNEMON_MAX_INSIGHTS overrides the ceiling"
+OUT=$(MNEMON_MAX_INSIGHTS=7 $M --data-dir "$TESTDIRMAX" gc --threshold 0.7)
+assert_jq "override max_insights=7" "$OUT" '.max_insights' '7'
+
+step "gc — MNEMON_MAX_INSIGHTS=0 reports unlimited as 0"
+OUT=$(MNEMON_MAX_INSIGHTS=0 $M --data-dir "$TESTDIRMAX" gc --threshold 0.7)
+assert_jq "unlimited max_insights=0" "$OUT" '.max_insights' '0'
+
+step "gc — negative MNEMON_MAX_INSIGHTS is treated as unlimited"
+OUT=$(MNEMON_MAX_INSIGHTS=-1 $M --data-dir "$TESTDIRMAX" gc --threshold 0.7)
+assert_jq "negative max_insights=0" "$OUT" '.max_insights' '0'
+
+step "gc — unparseable MNEMON_MAX_INSIGHTS warns and falls back to 1000"
+OUT=$(MNEMON_MAX_INSIGHTS=notanumber $M --data-dir "$TESTDIRMAX" gc --threshold 0.7 2>"$TESTDIRMAX/warn.txt")
+assert_jq "invalid falls back to 1000" "$OUT" '.max_insights' '1000'
+assert_contains "invalid value warns on stderr" "$(cat "$TESTDIRMAX/warn.txt")" "invalid MNEMON_MAX_INSIGHTS"
+
+step "remember — small ceiling prunes older low-importance insights"
+TESTDIRMAX2="$TESTDATA/maxins2"
+mkdir -p "$TESTDIRMAX2"
+OUT=$(MNEMON_MAX_INSIGHTS=1 $M --data-dir "$TESTDIRMAX2" remember --no-diff "Ceiling note A" --cat general --imp 1)
+assert_jq "first insert under cap prunes nothing" "$OUT" '.auto_pruned' '0'
+OUT=$(MNEMON_MAX_INSIGHTS=1 $M --data-dir "$TESTDIRMAX2" remember --no-diff "Ceiling note B" --cat general --imp 1)
+assert_jq "second insert over cap prunes one" "$OUT" '.auto_pruned' '1'
+
+step "remember — MNEMON_MAX_INSIGHTS=0 disables pruning"
+TESTDIRMAX3="$TESTDATA/maxins3"
+mkdir -p "$TESTDIRMAX3"
+MNEMON_MAX_INSIGHTS=0 $M --data-dir "$TESTDIRMAX3" remember --no-diff "Unlimited note A" --cat general --imp 1 > /dev/null
+OUT=$(MNEMON_MAX_INSIGHTS=0 $M --data-dir "$TESTDIRMAX3" remember --no-diff "Unlimited note B" --cat general --imp 1)
+assert_jq "no pruning when unlimited" "$OUT" '.auto_pruned' '0'
+
+# import honors the same ceiling (import reports auto_pruned too).
+cat > "$TESTDIRMAX/prune_draft.json" << 'DRAFTEOF'
+{
+  "schema_version": "1",
+  "insights": [
+    {"content": "Import ceiling note A", "category": "general", "importance": 1},
+    {"content": "Import ceiling note B", "category": "general", "importance": 1}
+  ]
+}
+DRAFTEOF
+
+step "import — small ceiling prunes down to the cap"
+TESTDIRMAX4="$TESTDATA/maxins4"
+mkdir -p "$TESTDIRMAX4"
+OUT=$(MNEMON_MAX_INSIGHTS=1 $M --data-dir "$TESTDIRMAX4" import --no-diff "$TESTDIRMAX/prune_draft.json")
+assert_jq "import over cap prunes one" "$OUT" '.auto_pruned' '1'
+
+step "import — MNEMON_MAX_INSIGHTS=0 disables pruning"
+TESTDIRMAX5="$TESTDATA/maxins5"
+mkdir -p "$TESTDIRMAX5"
+OUT=$(MNEMON_MAX_INSIGHTS=0 $M --data-dir "$TESTDIRMAX5" import --no-diff "$TESTDIRMAX/prune_draft.json")
+assert_jq "import prunes nothing when unlimited" "$OUT" '.auto_pruned' '0'
+
+
+# ══════════════════════════════════════════════════════════════════════
 banner "Milestone 11: Smart Recall Reranking + Signals"
 # ══════════════════════════════════════════════════════════════════════
 

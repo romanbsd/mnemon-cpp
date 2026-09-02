@@ -528,7 +528,7 @@ int run_mnemon(int argc, char** argv) {
         }
         auto p = db->refresh_effective_importance(insight.id);
         ei = p.first;
-        pruned = db->auto_prune(mnemon::kMaxInsights, {insight.id});
+        pruned = db->auto_prune(mnemon::max_insights_limit(), {insight.id});
         db->log_op("remember", insight.id, insight.content);
       });
     } catch (...) {
@@ -872,11 +872,17 @@ int run_mnemon(int argc, char** argv) {
                     {"edge_count", c.edge_count},
                     {"immune", c.immune}});
     }
+    // Report the ceiling the way it is configured rather than the sentinel
+    // auto_prune consumes: 0 is how MNEMON_MAX_INSIGHTS spells "no cap".
+    int max_insights_report = mnemon::max_insights_limit();
+    if (max_insights_report == mnemon::kMaxInsightsUnlimited) {
+      max_insights_report = 0;
+    }
     print_json(nlohmann::json{{"total_insights", total},
                               {"threshold", gc_thr},
                               {"candidates_found", static_cast<int>(cands.size())},
                               {"candidates", cj},
-                              {"max_insights", mnemon::kMaxInsights},
+                              {"max_insights", max_insights_report},
                               {"actions",
                                {{"purge", "mnemon forget <id>"}, {"keep", "mnemon gc --keep <id>"}}}});
   });
@@ -1534,7 +1540,7 @@ int run_mnemon(int argc, char** argv) {
           db->refresh_effective_importance(id);
         }
 
-        pruned = db->auto_prune(mnemon::kMaxInsights, {});
+        pruned = db->auto_prune(mnemon::max_insights_limit(), {});
       });
     } catch (const std::exception& ex) {
       throw std::runtime_error(std::string("finalize import graph: ") + ex.what());

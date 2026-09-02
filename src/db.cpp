@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <cctype>
@@ -830,6 +831,37 @@ std::tuple<std::vector<RetentionCandidate>, int> Database::get_retention_candida
     candidates.resize(static_cast<size_t>(limit));
   }
   return {candidates, total};
+}
+
+int max_insights_limit() {
+  const char* raw = std::getenv("MNEMON_MAX_INSIGHTS");
+  if (!raw) {
+    return kMaxInsights;
+  }
+  std::string s(raw);
+  // trim surrounding whitespace
+  auto notspace = [](unsigned char c) { return !std::isspace(c); };
+  s.erase(s.begin(), std::find_if(s.begin(), s.end(), notspace));
+  s.erase(std::find_if(s.rbegin(), s.rend(), notspace).base(), s.end());
+  if (s.empty()) {
+    return kMaxInsights;
+  }
+  size_t pos = 0;
+  int n = 0;
+  try {
+    n = std::stoi(s, &pos);
+  } catch (const std::exception&) {
+    std::cerr << "warning: invalid MNEMON_MAX_INSIGHTS \"" << s << "\" (ignored)\n";
+    return kMaxInsights;
+  }
+  if (pos != s.size()) {
+    std::cerr << "warning: invalid MNEMON_MAX_INSIGHTS \"" << s << "\" (ignored)\n";
+    return kMaxInsights;
+  }
+  if (n <= 0) {
+    return kMaxInsightsUnlimited;
+  }
+  return n;
 }
 
 int Database::auto_prune(int max_insights, const std::vector<std::string>& exclude_ids) {
