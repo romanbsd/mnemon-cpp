@@ -854,14 +854,21 @@ banner "Milestone 10: Auto-Prune Lifecycle"
 TESTDIR10="$TESTDATA/m10"
 mkdir -p "$TESTDIR10"
 
-step "auto-prune — insert 5 low-imp + 2 high-imp insights (cap=4 for test)"
-# We'll use a small cap to test pruning. The cap is hardcoded at 1000 in production,
-# so here we test that the mechanism WORKS by checking auto_pruned=0 under cap.
+step "auto-prune — default grace protects a same-second write burst"
 for i in 1 2 3; do
-  $M --data-dir "$TESTDIR10" remember --no-diff "Low importance note $i" --cat general --imp 1 > /dev/null
+  OUT=$(MNEMON_MAX_INSIGHTS=2 $M --data-dir "$TESTDIR10" remember --no-diff "Low importance note $i" --cat general --imp 1)
 done
-OUT=$($M --data-dir "$TESTDIR10" remember --no-diff "High importance decision" --cat decision --imp 5)
-assert_jq "auto_pruned is 0 under cap" "$OUT" '.auto_pruned' '0'
+assert_jq "newborn memories are not pruned" "$OUT" '.auto_pruned' '0'
+assert_jq "newborn prune id list is empty" "$OUT" '.auto_pruned_ids | length' '0'
+
+step "auto-prune — explicit zero grace returns ids and durable audit rows"
+OUT=$(MNEMON_MAX_INSIGHTS=2 MNEMON_AUTO_PRUNE_MIN_AGE=0 $M --data-dir "$TESTDIR10" remember --no-diff "High importance decision" --cat decision --imp 5)
+assert_jq "two excess memories are pruned" "$OUT" '.auto_pruned' '2'
+assert_jq "pruned ids match count" "$OUT" '.auto_pruned_ids | length' '2'
+PRUNED_PREFIX=$(echo "$OUT" | jq -r '.auto_pruned_ids[0][0:8]')
+LOG_OUT=$($M --data-dir "$TESTDIR10" log --limit 20)
+assert_contains "auto-prune operation is visible" "$LOG_OUT" "auto-prune"
+assert_contains "auto-prune log names returned id" "$LOG_OUT" "$PRUNED_PREFIX"
 
 step "auto-prune — effective_importance varies by importance level"
 # imp=5 should have much higher EI than imp=1
@@ -922,13 +929,20 @@ OUT=$(MNEMON_MAX_INSIGHTS=notanumber $M --data-dir "$TESTDIRMAX" gc --threshold 
 assert_jq "invalid falls back to 1000" "$OUT" '.max_insights' '1000'
 assert_contains "invalid value warns on stderr" "$(cat "$TESTDIRMAX/warn.txt")" "invalid MNEMON_MAX_INSIGHTS"
 
-step "remember — small ceiling prunes older low-importance insights"
+step "remember — small ceiling prunes older low-importance insights (zero grace)"
 TESTDIRMAX2="$TESTDATA/maxins2"
 mkdir -p "$TESTDIRMAX2"
-OUT=$(MNEMON_MAX_INSIGHTS=1 $M --data-dir "$TESTDIRMAX2" remember --no-diff "Ceiling note A" --cat general --imp 1)
+OUT=$(MNEMON_MAX_INSIGHTS=1 MNEMON_AUTO_PRUNE_MIN_AGE=0 $M --data-dir "$TESTDIRMAX2" remember --no-diff "Ceiling note A" --cat general --imp 1)
 assert_jq "first insert under cap prunes nothing" "$OUT" '.auto_pruned' '0'
-OUT=$(MNEMON_MAX_INSIGHTS=1 $M --data-dir "$TESTDIRMAX2" remember --no-diff "Ceiling note B" --cat general --imp 1)
+OUT=$(MNEMON_MAX_INSIGHTS=1 MNEMON_AUTO_PRUNE_MIN_AGE=0 $M --data-dir "$TESTDIRMAX2" remember --no-diff "Ceiling note B" --cat general --imp 1)
 assert_jq "second insert over cap prunes one" "$OUT" '.auto_pruned' '1'
+
+step "remember — default grace protects newborns even over the ceiling"
+TESTDIRMAXG="$TESTDATA/maxins_grace"
+mkdir -p "$TESTDIRMAXG"
+MNEMON_MAX_INSIGHTS=1 $M --data-dir "$TESTDIRMAXG" remember --no-diff "Grace note A" --cat general --imp 1 > /dev/null
+OUT=$(MNEMON_MAX_INSIGHTS=1 $M --data-dir "$TESTDIRMAXG" remember --no-diff "Grace note B" --cat general --imp 1)
+assert_jq "newborn is protected by default grace" "$OUT" '.auto_pruned' '0'
 
 step "remember — MNEMON_MAX_INSIGHTS=0 disables pruning"
 TESTDIRMAX3="$TESTDATA/maxins3"
@@ -948,11 +962,12 @@ cat > "$TESTDIRMAX/prune_draft.json" << 'DRAFTEOF'
 }
 DRAFTEOF
 
-step "import — small ceiling prunes down to the cap"
+step "import — small ceiling prunes down to the cap (zero grace)"
 TESTDIRMAX4="$TESTDATA/maxins4"
 mkdir -p "$TESTDIRMAX4"
-OUT=$(MNEMON_MAX_INSIGHTS=1 $M --data-dir "$TESTDIRMAX4" import --no-diff "$TESTDIRMAX/prune_draft.json")
+OUT=$(MNEMON_MAX_INSIGHTS=1 MNEMON_AUTO_PRUNE_MIN_AGE=0 $M --data-dir "$TESTDIRMAX4" import --no-diff "$TESTDIRMAX/prune_draft.json")
 assert_jq "import over cap prunes one" "$OUT" '.auto_pruned' '1'
+assert_jq "import reports pruned id list" "$OUT" '.auto_pruned_ids | length' '1'
 
 step "import — MNEMON_MAX_INSIGHTS=0 disables pruning"
 TESTDIRMAX5="$TESTDATA/maxins5"

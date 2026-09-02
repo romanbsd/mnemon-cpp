@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=25b69f9af97638035de1887f0fc91ad0b3bfa422
-last_sha_subject=fix(memory): enforce readonly mode across writes
-last_sha_date=2026-08-30T21:16:07+02:00
+last_sha=71c067a71c7b06f1457e17a98ee2b073a7e1a8dc
+last_sha_subject=fix(memory): make auto-prune observable and age-safe
+last_sha_date=2026-08-30T21:56:27+02:00
