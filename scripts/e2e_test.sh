@@ -1044,6 +1044,24 @@ step "setup --target bogus error mentions codex"
 OUT=$($M --data-dir "$SETUPDIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions codex" "$OUT" "codex"
 
+CODEX_SETUP_DIR="$TESTDATA/setup_codex"
+mkdir -p "$CODEX_SETUP_DIR"
+step "setup --target codex — context hooks emit structured JSON"
+(cd "$CODEX_SETUP_DIR" && $M --data-dir "$CODEX_SETUP_DIR" setup --target codex --yes > /dev/null 2>&1) || true
+CODEX_PRIME="$CODEX_SETUP_DIR/.codex/hooks/mnemon/prime.sh"
+if [ -f "$CODEX_PRIME" ]; then
+  assert_contains "codex prime wraps context in hookSpecificOutput" "$(cat "$CODEX_PRIME")" "hookSpecificOutput"
+  assert_contains "codex prime uses additionalContext" "$(cat "$CODEX_PRIME")" "additionalContext"
+else
+  fail "codex prime.sh written" "missing $CODEX_PRIME"
+fi
+CODEX_UP="$CODEX_SETUP_DIR/.codex/hooks/mnemon/user_prompt.sh"
+if [ -f "$CODEX_UP" ]; then
+  assert_contains "codex user_prompt emits structured JSON" "$(cat "$CODEX_UP")" "hookSpecificOutput"
+else
+  fail "codex user_prompt.sh written" "missing $CODEX_UP"
+fi
+
 CURSOR_SETUP_DIR="$TESTDATA/setup_cursor"
 mkdir -p "$CURSOR_SETUP_DIR"
 

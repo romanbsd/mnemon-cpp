@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=f4bf7c3adba28ab4f281eefbeccb771c34107de6
-last_sha_subject=fix(embed): finish provider-neutral embedding support
-last_sha_date=2026-08-23T18:39:26+08:00
+last_sha=76f839927ab0a20fa2af9863a76258feaf5d8f09
+last_sha_subject=fix: emit structured JSON from Codex context hooks
+last_sha_date=2026-08-26T01:53:50+08:00
