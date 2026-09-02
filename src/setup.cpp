@@ -652,6 +652,12 @@ static Environment detect_cursor(bool global) {
                                   global ? global_dir.string() : ".cursor");
 }
 
+static Environment detect_zcode(bool global) {
+  fs::path global_dir = fs::path(home_dir()) / ".zcode";
+  return detect_skill_environment("zcode", "ZCode", "zcode", global_dir,
+                                  global ? global_dir.string() : ".zcode", "cli/config.json");
+}
+
 static Environment detect_trae(bool global) {
   fs::path global_dir = fs::path(home_dir()) / ".trae";
   return detect_skill_environment("trae", "Trae", "trae", global_dir, global ? global_dir.string() : ".trae",
@@ -770,10 +776,10 @@ static Environment detect_hermes() {
 }
 
 static std::vector<Environment> detect_environments(bool global) {
-  return {detect_claude(global),     detect_codex(global),     detect_cursor(global),    detect_trae(global),
-          detect_qoder(global),      detect_qoderwork(),       detect_codebuddy(global), detect_workbuddy(global),
-          detect_kimi(),             detect_opencode(global),  detect_openclaw(global),  detect_nanobot(global),
-          detect_pi(global),         detect_hermes()};
+  return {detect_claude(global),     detect_codex(global),     detect_cursor(global),    detect_zcode(global),
+          detect_trae(global),       detect_qoder(global),     detect_qoderwork(),       detect_codebuddy(global),
+          detect_workbuddy(global),  detect_kimi(),            detect_opencode(global),  detect_openclaw(global),
+          detect_nanobot(global),    detect_pi(global),        detect_hermes()};
 }
 
 // --- install pieces ---
@@ -2464,6 +2470,166 @@ static bool install_openclaw(const Environment& env, bool global, bool setup_yes
   return true;
 }
 
+// --- ZCode ---
+//
+// ZCode registers user-level lifecycle hooks in cli/config.json under a nested
+// hooks.events map; project-level hooks are unsupported upstream, so local
+// installs write only the skill.
+
+static nlohmann::json zcode_process_hook(const std::string& script_path, const std::string& status) {
+  return nlohmann::json{{"type", "process"},
+                        {"command", "bash"},
+                        {"args", nlohmann::json::array({script_path})},
+                        {"enabled", true},
+                        {"timeoutMs", 30000},
+                        {"statusMessage", status}};
+}
+
+static void zcode_remove_hooks(nlohmann::json& data) {
+  if (!data.contains("hooks") || !data["hooks"].is_object()) {
+    return;
+  }
+  auto& hooks = data["hooks"];
+  if (!hooks.contains("events") || !hooks["events"].is_object()) {
+    return;
+  }
+  auto& events = hooks["events"];
+  for (const char* key : {"SessionStart", "UserPromptSubmit", "Stop"}) {
+    if (!events.contains(key) || !events[key].is_array()) {
+      continue;
+    }
+    nlohmann::json filtered = filter_hook_array(events[key]);
+    if (filtered.empty()) {
+      events.erase(key);
+    } else {
+      events[key] = std::move(filtered);
+    }
+  }
+  if (events.empty()) {
+    hooks.erase("events");
+  }
+  if (hooks.size() == 1 && hooks.contains("enabled") && hooks["enabled"] == true) {
+    data.erase("hooks");
+  }
+}
+
+static void zcode_add_hooks(nlohmann::json& data, const std::string& hooks_dir) {
+  zcode_remove_hooks(data);
+  if (!data.contains("hooks") || !data["hooks"].is_object()) {
+    data["hooks"] = nlohmann::json::object();
+  }
+  auto& hooks = data["hooks"];
+  hooks["enabled"] = true;
+  if (!hooks.contains("events") || !hooks["events"].is_object()) {
+    hooks["events"] = nlohmann::json::object();
+  }
+  auto& events = hooks["events"];
+
+  auto append = [](nlohmann::json& slot, nlohmann::json entry) {
+    if (!slot.is_array()) {
+      slot = nlohmann::json::array();
+    }
+    slot.push_back(std::move(entry));
+  };
+  auto join = [&](const char* f) { return (fs::path(hooks_dir) / f).string(); };
+
+  append(events["SessionStart"],
+         nlohmann::json{{"matcher", "startup|clear|compact"},
+                        {"hooks", nlohmann::json::array(
+                                      {zcode_process_hook(join("prime.sh"), "Loading Mnemon context")})}});
+  append(events["UserPromptSubmit"],
+         nlohmann::json{{"hooks", nlohmann::json::array({zcode_process_hook(
+                                      join("user_prompt.sh"), "Checking Mnemon recall guidance")})}});
+  append(events["Stop"],
+         nlohmann::json{{"hooks", nlohmann::json::array(
+                                      {zcode_process_hook(join("stop.sh"), "Checking Mnemon writeback guidance")})}});
+}
+
+static bool install_zcode(const Environment& env, bool global, bool setup_yes) {
+  std::string config_dir = env.config_dir;
+  bool global_install = global;
+  if (!global && !setup_yes && is_tty_in()) {
+    std::string local_dir = ".zcode";
+    std::string global_dir = (fs::path(home_dir()) / ".zcode").string();
+    size_t idx = select_one("Install scope",
+                            {"Local — skill for this project only (" + local_dir + "/)",
+                             "Global — skill and lifecycle hooks (" + global_dir + "/)"},
+                            0);
+    if (idx == 1) {
+      config_dir = global_dir;
+      global_install = true;
+    } else {
+      config_dir = local_dir;
+    }
+  }
+
+  int total_steps = global_install ? 4 : 2;
+  std::cout << "\nSetting up ZCode (" << config_dir << ")...\n";
+
+  std::string prompt_path;
+  if (!install_skill_and_prompts(
+          total_steps, [&] { return write_skill_file(config_dir, mnemon::embedded::zcode_SKILL_md()); },
+          prompt_path)) {
+    return false;
+  }
+
+  if (!global_install) {
+    std::cout << "\nSetup complete!\n";
+    std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
+    std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
+    std::cout << "ZCode currently ignores project-level hooks; use '--global' to install lifecycle hooks.\n";
+    std::cout << "Refresh Settings → Skills or start a new ZCode session to activate.\n";
+    std::cout << "Run 'mnemon setup --eject --target zcode' to remove.\n";
+    return true;
+  }
+
+  std::cout << "\n[3/" << total_steps << "] Hooks\n";
+  const std::array<HookFile, 3> hook_files = {{{"Hook: prime", "prime.sh", mnemon::embedded::zcode_prime_sh()},
+                                               {"Hook: remind", "user_prompt.sh", mnemon::embedded::zcode_user_prompt_sh()},
+                                               {"Hook: nudge", "stop.sh", mnemon::embedded::zcode_stop_sh()}}};
+  if (!install_hook_files(hook_files,
+                          [&](const HookFile& h) { return write_hook_file(config_dir, h.filename, h.content); })) {
+    return false;
+  }
+
+  std::cout << "\n[4/" << total_steps << "] Config\n";
+  if (!report_path_action(
+          "Hooks config", [&] { return register_json_hooks(config_dir, "cli/config.json", zcode_add_hooks); }, true)) {
+    return false;
+  }
+
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Hooks   " << config_dir << "/cli/config.json (SessionStart, UserPromptSubmit, Stop)\n";
+  std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
+  std::cout << "Start a new ZCode session to activate the mnemon skill and hooks.\n";
+  std::cout << "Run 'mnemon setup --eject --target zcode --global' to remove.\n";
+  return true;
+}
+
+static int zcode_eject(const std::string& config_dir) {
+  int errs = 0;
+  std::cout << "\nRemoving ZCode integration (" << config_dir << ")...\n";
+
+  remove_hooks_tree(config_dir, errs);
+
+  fs::path config_path = fs::path(config_dir) / "cli" / "config.json";
+  try {
+    nlohmann::json data = read_json_file(config_path);
+    zcode_remove_hooks(data);
+    write_or_remove_json_file(config_path, data);
+    status_ok("Hooks config", config_path.string() + " cleaned");
+  } catch (const std::exception& e) {
+    status_error("Hooks config", e.what());
+    ++errs;
+  }
+  remove_if_empty_dir(fs::path(config_dir) / "cli");
+
+  remove_skill_tree(config_dir, errs);
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
 static bool install_env(const Environment* env, bool global, bool setup_yes, const RunOptions& opt) {
   if (env->name == "claude-code") {
     return install_claude_code(*env, global, setup_yes, opt);
@@ -2473,6 +2639,9 @@ static bool install_env(const Environment* env, bool global, bool setup_yes, con
   }
   if (env->name == "cursor") {
     return install_cursor(*env, global, setup_yes);
+  }
+  if (env->name == "zcode") {
+    return install_zcode(*env, global, setup_yes);
   }
   if (env->name == "trae") {
     return install_trae(*env, global, setup_yes);
@@ -2521,6 +2690,9 @@ static int eject_env(const Environment* env, bool yes) {
   }
   if (env->name == "cursor") {
     return cursor_eject(env->config_dir);
+  }
+  if (env->name == "zcode") {
+    return zcode_eject(env->config_dir);
   }
   if (env->name == "trae") {
     int errs = trae_eject(env->config_dir);
@@ -2697,8 +2869,8 @@ static void run_eject_flow(const RunOptions& opt) {
 } // namespace
 
 void run(const RunOptions& opt) {
-  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "trae" && opt.target != "qoder" && opt.target != "qoderwork" && opt.target != "codebuddy" && opt.target != "workbuddy" && opt.target != "kimi" && opt.target != "opencode" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
-    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, trae, qoder, qoderwork, codebuddy, workbuddy, kimi, opencode, openclaw, nanobot, pi, or hermes)");
+  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "zcode" && opt.target != "trae" && opt.target != "qoder" && opt.target != "qoderwork" && opt.target != "codebuddy" && opt.target != "workbuddy" && opt.target != "kimi" && opt.target != "opencode" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
+    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, zcode, trae, qoder, qoderwork, codebuddy, workbuddy, kimi, opencode, openclaw, nanobot, pi, or hermes)");
   }
   if (opt.eject) {
     run_eject_flow(opt);
