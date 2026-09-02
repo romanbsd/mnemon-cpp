@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=f30d72bd254c0be34c96a09f233b1565c7b44564
-last_sha_subject=feat(memory): make the auto-prune insight ceiling configurable
-last_sha_date=2026-08-19T02:59:24-07:00
+last_sha=b64fec4c6f8ca53fef5a0e20c2438277c8abc600
+last_sha_subject=feat: add ZCode memory integration
+last_sha_date=2026-08-22T17:44:14+08:00

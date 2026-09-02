@@ -1020,6 +1020,63 @@ step "setup --target bogus error mentions cursor"
 OUT=$($M --data-dir "$CURSOR_SETUP_DIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions cursor" "$OUT" "cursor"
 
+ZCODE_SETUP_DIR="$TESTDATA/setup_zcode"
+mkdir -p "$ZCODE_SETUP_DIR"
+
+step "setup --target zcode --yes — local installs skill only (no project hooks)"
+OUT=$(cd "$ZCODE_SETUP_DIR" && $M --data-dir "$ZCODE_SETUP_DIR" setup --target zcode --yes 2>&1 || true)
+assert_contains "zcode local skill installed" "$OUT" "Skill"
+assert_contains "zcode local mentions project-level hooks" "$OUT" "ignores project-level hooks"
+if [ -f "$ZCODE_SETUP_DIR/.zcode/skills/mnemon/SKILL.md" ]; then
+  PASS=$((PASS + 1)); TOTAL=$((TOTAL + 1))
+  echo -e "    ${GREEN}✔${RESET} zcode local SKILL.md written"
+else
+  FAIL=$((FAIL + 1)); TOTAL=$((TOTAL + 1))
+  echo -e "    ${RED}✘${RESET} zcode local SKILL.md missing"
+fi
+TOTAL=$((TOTAL + 1))
+if [ ! -f "$ZCODE_SETUP_DIR/.zcode/cli/config.json" ]; then
+  PASS=$((PASS + 1))
+  echo -e "    ${GREEN}✔${RESET} zcode local writes no cli/config.json"
+else
+  FAIL=$((FAIL + 1))
+  echo -e "    ${RED}✘${RESET} zcode local should not write cli/config.json"
+fi
+
+step "setup --target zcode --yes --global — installs skill + lifecycle hooks in cli/config.json"
+ZCODE_HOME="$TESTDATA/zcode_home"
+mkdir -p "$ZCODE_HOME"
+OUT=$(HOME="$ZCODE_HOME" $M --data-dir "$ZCODE_HOME/.mnemon-data" setup --target zcode --yes --global 2>&1 || true)
+assert_contains "zcode global skill installed" "$OUT" "Skill"
+ZCODE_CFG="$ZCODE_HOME/.zcode/cli/config.json"
+if [ -f "$ZCODE_CFG" ]; then
+  ZJSON="$(cat "$ZCODE_CFG")"
+  assert_jq "zcode hooks enabled" "$ZJSON" '.hooks.enabled' true
+  assert_jq "zcode SessionStart matcher" "$ZJSON" '.hooks.events.SessionStart[0].matcher' 'startup|clear|compact'
+  assert_jq "zcode SessionStart process type" "$ZJSON" '.hooks.events.SessionStart[0].hooks[0].type' 'process'
+  assert_jq "zcode SessionStart prime arg" "$ZJSON" '.hooks.events.SessionStart[0].hooks[0].args[0] | endswith("hooks/mnemon/prime.sh")' true
+  assert_jq "zcode SessionStart timeoutMs" "$ZJSON" '.hooks.events.SessionStart[0].hooks[0].timeoutMs' 30000
+  assert_jq "zcode UserPromptSubmit remind arg" "$ZJSON" '.hooks.events.UserPromptSubmit[0].hooks[0].args[0] | endswith("hooks/mnemon/user_prompt.sh")' true
+  assert_jq "zcode Stop nudge arg" "$ZJSON" '.hooks.events.Stop[0].hooks[0].args[0] | endswith("hooks/mnemon/stop.sh")' true
+else
+  fail "zcode cli/config.json written" "missing $ZCODE_CFG"
+fi
+
+step "setup --eject --target zcode --global — removes skill and cleans hooks"
+HOME="$ZCODE_HOME" $M --data-dir "$ZCODE_HOME/.mnemon-data" setup --eject --target zcode --global --yes > /dev/null 2>&1 || true
+TOTAL=$((TOTAL + 1))
+if [ ! -f "$ZCODE_HOME/.zcode/skills/mnemon/SKILL.md" ]; then
+  PASS=$((PASS + 1))
+  echo -e "    ${GREEN}✔${RESET} zcode eject removed skill"
+else
+  FAIL=$((FAIL + 1))
+  echo -e "    ${RED}✘${RESET} zcode eject left skill behind"
+fi
+
+step "setup --target bogus error mentions zcode"
+OUT=$($M --data-dir "$ZCODE_SETUP_DIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions zcode" "$OUT" "zcode"
+
 TRAE_SETUP_DIR="$TESTDATA/setup_trae"
 mkdir -p "$TRAE_SETUP_DIR"
 
