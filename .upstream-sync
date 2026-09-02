@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=8c767bac66dfe8d6692a1cba7c47dc8b82eaa1ae
-last_sha_subject=feat(memory): add token-friendly brief retrieval
-last_sha_date=2026-08-30T22:02:06+02:00
+last_sha=aab97af8002bf0c8ac18d88da64293e41c9eb121
+last_sha_subject=Merge pull request #125 from mnemon-dev/codex/fix-readonly-uri-123
+last_sha_date=2026-09-01T00:36:55+08:00
