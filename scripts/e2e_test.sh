@@ -1077,6 +1077,37 @@ step "setup --target bogus error mentions zcode"
 OUT=$($M --data-dir "$ZCODE_SETUP_DIR" setup --target bogus 2>&1 || true)
 assert_contains "error mentions zcode" "$OUT" "zcode"
 
+MINIMAX_SETUP_DIR="$TESTDATA/setup_minimax"
+mkdir -p "$MINIMAX_SETUP_DIR"
+
+step "setup --target minimax-code --yes — installs skill only"
+OUT=$(cd "$MINIMAX_SETUP_DIR" && $M --data-dir "$MINIMAX_SETUP_DIR" setup --target minimax-code --yes 2>&1 || true)
+assert_contains "minimax skill installed" "$OUT" "Skill"
+assert_contains "minimax activation message" "$OUT" "Start a new MiniMax Code conversation"
+TOTAL=$((TOTAL + 1))
+if [ -f "$MINIMAX_SETUP_DIR/.minimax/skills/mnemon/SKILL.md" ]; then
+  PASS=$((PASS + 1))
+  echo -e "    ${GREEN}✔${RESET} minimax SKILL.md written"
+else
+  FAIL=$((FAIL + 1))
+  echo -e "    ${RED}✘${RESET} minimax SKILL.md missing"
+fi
+
+step "setup --eject --target minimax-code — removes skill"
+(cd "$MINIMAX_SETUP_DIR" && $M --data-dir "$MINIMAX_SETUP_DIR" setup --eject --target minimax-code --yes > /dev/null 2>&1) || true
+TOTAL=$((TOTAL + 1))
+if [ ! -f "$MINIMAX_SETUP_DIR/.minimax/skills/mnemon/SKILL.md" ]; then
+  PASS=$((PASS + 1))
+  echo -e "    ${GREEN}✔${RESET} minimax eject removed skill"
+else
+  FAIL=$((FAIL + 1))
+  echo -e "    ${RED}✘${RESET} minimax eject left skill behind"
+fi
+
+step "setup --target bogus error mentions minimax-code"
+OUT=$($M --data-dir "$MINIMAX_SETUP_DIR" setup --target bogus 2>&1 || true)
+assert_contains "error mentions minimax-code" "$OUT" "minimax-code"
+
 TRAE_SETUP_DIR="$TESTDATA/setup_trae"
 mkdir -p "$TRAE_SETUP_DIR"
 

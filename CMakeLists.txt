@@ -56,6 +56,7 @@ set(ASSET_DEPS
   "${ASSET_ROOT}/zcode/prime.ps1"
   "${ASSET_ROOT}/zcode/user_prompt.ps1"
   "${ASSET_ROOT}/zcode/stop.ps1"
+  "${ASSET_ROOT}/minimax/SKILL.md"
   "${ASSET_ROOT}/trae/SKILL.md"
   "${ASSET_ROOT}/trae/prime.sh"
   "${ASSET_ROOT}/trae/user_prompt.sh"
