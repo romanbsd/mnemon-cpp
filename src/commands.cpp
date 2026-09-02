@@ -906,12 +906,17 @@ int run_mnemon(int argc, char** argv) {
                                  {"embedded", emb},
                                  {"coverage", std::to_string(pct) + "%"},
                                  {"embedding_available", embedding_available},
-                                 {"ollama_available", embedding_available},
+                                 {"ollama_available", embedding_available}, // Backward-compatible alias.
+                                 {"protocol", oc.protocol_string()},
                                  {"model", oc.model}});
       return;
     }
     if (!embedding_available) {
-      throw std::runtime_error("embedding service not available at " + oc.endpoint);
+      if (oc.protocol_string() == "ollama") {
+        throw std::runtime_error("Ollama embedding provider not available at " + oc.endpoint +
+                                 " — install with: brew install ollama && ollama pull " + oc.model);
+      }
+      throw std::runtime_error("OpenAI-compatible embedding provider not available at " + oc.endpoint);
     }
     if (!emb_id.empty()) {
       auto ins = db->get_insight_by_id(emb_id);

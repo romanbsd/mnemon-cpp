@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=ad4def15139a4e34f900aaa7bc66417bfff2cdd1
-last_sha_subject=feat(embed): support OpenAI-compatible embedding servers
-last_sha_date=2026-08-23T11:13:36+08:00
+last_sha=f4bf7c3adba28ab4f281eefbeccb771c34107de6
+last_sha_subject=fix(embed): finish provider-neutral embedding support
+last_sha_date=2026-08-23T18:39:26+08:00
