@@ -665,7 +665,19 @@ OUT=$($M --data-dir "$TESTDIR7" embed --status)
 show_json "$OUT"
 assert_jq "total_insights is 2" "$OUT" '.total_insights' '2'
 assert_contains "has ollama_available" "$OUT" '"ollama_available"'
+assert_contains "has embedding_available" "$OUT" '"embedding_available"'
 assert_contains "has coverage field" "$OUT" '"coverage"'
+
+step "embed --status — reports protocol (default ollama)"
+assert_jq "default protocol is ollama" "$OUT" '.protocol' 'ollama'
+OUT_OA=$(MNEMON_EMBED_PROTOCOL=openai $M --data-dir "$TESTDIR7" embed --status)
+assert_jq "MNEMON_EMBED_PROTOCOL=openai reports openai" "$OUT_OA" '.protocol' 'openai'
+
+step "embed — unavailable error is protocol-specific"
+ERR_OLL=$(MNEMON_EMBED_ENDPOINT="http://127.0.0.1:1" $M --data-dir "$TESTDIR7" embed --all 2>&1 || true)
+assert_contains "ollama unavailable message" "$ERR_OLL" "Ollama embedding provider not available"
+ERR_OA=$(MNEMON_EMBED_ENDPOINT="http://127.0.0.1:1/v1" $M --data-dir "$TESTDIR7" embed --all 2>&1 || true)
+assert_contains "openai unavailable message" "$ERR_OA" "OpenAI-compatible embedding provider not available"
 
 # Check if Ollama is available for the remaining tests
 OLLAMA_OK=$(echo "$OUT" | jq -r '.ollama_available')
