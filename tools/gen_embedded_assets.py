@@ -42,6 +42,7 @@ ASSET_FILES = [
     "zcode/prime.ps1",
     "zcode/user_prompt.ps1",
     "zcode/stop.ps1",
+    "minimax/SKILL.md",
     "trae/SKILL.md",
     "trae/prime.sh",
     "trae/user_prompt.sh",

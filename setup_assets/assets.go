@@ -65,6 +65,9 @@ var ZCodeUserPromptHookPowerShell []byte
 //go:embed zcode/stop.ps1
 var ZCodeStopHookPowerShell []byte
 
+//go:embed minimax/SKILL.md
+var MiniMaxCodeSkill []byte
+
 //go:embed trae/SKILL.md
 var TraeSkill []byte
 
@@ -184,5 +187,5 @@ var HermesCompactHook []byte
 
 // All returns the embedded filesystem for inspection.
 //
-//go:embed claude codex cursor zcode trae qoder qoderwork codebuddy workbuddy kimi opencode openclaw nanoclaw nanobot pi hermes
+//go:embed claude codex cursor zcode minimax trae qoder qoderwork codebuddy workbuddy kimi opencode openclaw nanoclaw nanobot pi hermes
 var All embed.FS

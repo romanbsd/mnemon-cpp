@@ -659,6 +659,38 @@ static Environment detect_zcode(bool global) {
                                   global ? global_dir.string() : ".zcode", "cli/config.json");
 }
 
+static Environment detect_minimax(bool global) {
+  Environment env;
+  env.name = "minimax-code";
+  env.display = "MiniMax Code";
+  fs::path global_dir = fs::path(home_dir()) / ".minimax";
+  fs::path legacy_dir = fs::path(home_dir()) / ".mavis";
+  env.config_dir = global ? global_dir.string() : ".minimax";
+
+  // MiniMax Code is primarily a desktop app. New releases use ~/.minimax;
+  // ~/.mavis is the legacy data directory migrated by the app on startup.
+  std::error_code ec;
+  for (const auto& dir : {global_dir, legacy_dir}) {
+    if (fs::exists(dir, ec)) {
+      env.detected = true;
+      break;
+    }
+  }
+  for (const char* name : {"minimax-code", "minimax", "mavis"}) {
+    std::string bin;
+    if (look_path(name, bin)) {
+      env.detected = true;
+      env.bin_path = bin;
+      break;
+    }
+  }
+  fs::path skill = fs::path(env.config_dir) / "skills" / "mnemon" / "SKILL.md";
+  if (fs::exists(skill, ec)) {
+    env.installed = true;
+  }
+  return env;
+}
+
 static Environment detect_trae(bool global) {
   fs::path global_dir = fs::path(home_dir()) / ".trae";
   return detect_skill_environment("trae", "Trae", "trae", global_dir, global ? global_dir.string() : ".trae",
@@ -778,9 +810,9 @@ static Environment detect_hermes() {
 
 static std::vector<Environment> detect_environments(bool global) {
   return {detect_claude(global),     detect_codex(global),     detect_cursor(global),    detect_zcode(global),
-          detect_trae(global),       detect_qoder(global),     detect_qoderwork(),       detect_codebuddy(global),
-          detect_workbuddy(global),  detect_kimi(),            detect_opencode(global),  detect_openclaw(global),
-          detect_nanobot(global),    detect_pi(global),        detect_hermes()};
+          detect_minimax(global),    detect_trae(global),      detect_qoder(global),     detect_qoderwork(),
+          detect_codebuddy(global),  detect_workbuddy(global), detect_kimi(),            detect_opencode(global),
+          detect_openclaw(global),   detect_nanobot(global),   detect_pi(global),        detect_hermes()};
 }
 
 // --- install pieces ---
@@ -2630,6 +2662,56 @@ static int zcode_eject(const std::string& config_dir) {
   return errs;
 }
 
+// --- MiniMax Code ---
+//
+// Skill-only: the local Agent V2 path does not dispatch a dependable prompt
+// lifecycle hook, so no hooks are installed.
+
+static bool install_minimax(const Environment& env, bool global, bool setup_yes) {
+  std::string config_dir = env.config_dir;
+  bool global_install = global;
+  if (!global && !setup_yes && is_tty_in()) {
+    std::string local_dir = ".minimax";
+    std::string global_dir = (fs::path(home_dir()) / ".minimax").string();
+    size_t idx = select_one("Install scope",
+                            {"Local — this project only (" + local_dir + "/)",
+                             "Global — all projects (" + global_dir + "/)"},
+                            0);
+    if (idx == 1) {
+      config_dir = global_dir;
+      global_install = true;
+    } else {
+      config_dir = local_dir;
+    }
+  }
+
+  std::cout << "\nSetting up MiniMax Code (" << config_dir << ")...\n";
+  std::string prompt_path;
+  if (!install_skill_and_prompts(
+          2, [&] { return write_skill_file(config_dir, mnemon::embedded::minimax_SKILL_md()); }, prompt_path)) {
+    return false;
+  }
+
+  std::cout << "\nSetup complete!\n";
+  std::cout << "  Skill   " << config_dir << "/skills/mnemon/SKILL.md\n";
+  std::cout << "  Prompts " << prompt_path << "/ (guide.md, skill.md)\n\n";
+  std::cout << "Start a new MiniMax Code conversation to activate the mnemon skill.\n";
+  if (global_install) {
+    std::cout << "Run 'mnemon setup --eject --target minimax-code --global' to remove.\n";
+  } else {
+    std::cout << "Run 'mnemon setup --eject --target minimax-code' to remove.\n";
+  }
+  return true;
+}
+
+static int minimax_eject(const std::string& config_dir) {
+  int errs = 0;
+  std::cout << "\nRemoving MiniMax Code integration (" << config_dir << ")...\n";
+  remove_skill_tree(config_dir, errs);
+  remove_if_empty_dir(config_dir);
+  return errs;
+}
+
 static bool install_env(const Environment* env, bool global, bool setup_yes, const RunOptions& opt) {
   if (env->name == "claude-code") {
     return install_claude_code(*env, global, setup_yes, opt);
@@ -2642,6 +2724,9 @@ static bool install_env(const Environment* env, bool global, bool setup_yes, con
   }
   if (env->name == "zcode") {
     return install_zcode(*env, global, setup_yes);
+  }
+  if (env->name == "minimax-code") {
+    return install_minimax(*env, global, setup_yes);
   }
   if (env->name == "trae") {
     return install_trae(*env, global, setup_yes);
@@ -2693,6 +2778,9 @@ static int eject_env(const Environment* env, bool yes) {
   }
   if (env->name == "zcode") {
     return zcode_eject(env->config_dir);
+  }
+  if (env->name == "minimax-code") {
+    return minimax_eject(env->config_dir);
   }
   if (env->name == "trae") {
     int errs = trae_eject(env->config_dir);
@@ -2869,8 +2957,8 @@ static void run_eject_flow(const RunOptions& opt) {
 } // namespace
 
 void run(const RunOptions& opt) {
-  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "zcode" && opt.target != "trae" && opt.target != "qoder" && opt.target != "qoderwork" && opt.target != "codebuddy" && opt.target != "workbuddy" && opt.target != "kimi" && opt.target != "opencode" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
-    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, zcode, trae, qoder, qoderwork, codebuddy, workbuddy, kimi, opencode, openclaw, nanobot, pi, or hermes)");
+  if (!opt.target.empty() && opt.target != "claude-code" && opt.target != "codex" && opt.target != "cursor" && opt.target != "zcode" && opt.target != "minimax-code" && opt.target != "trae" && opt.target != "qoder" && opt.target != "qoderwork" && opt.target != "codebuddy" && opt.target != "workbuddy" && opt.target != "kimi" && opt.target != "opencode" && opt.target != "openclaw" && opt.target != "nanobot" && opt.target != "pi" && opt.target != "hermes") {
+    throw std::runtime_error("invalid target \"" + opt.target + "\" (must be claude-code, codex, cursor, zcode, minimax-code, trae, qoder, qoderwork, codebuddy, workbuddy, kimi, opencode, openclaw, nanobot, pi, or hermes)");
   }
   if (opt.eject) {
     run_eject_flow(opt);

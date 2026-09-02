@@ -1,6 +1,6 @@
 # Last upstream commit evaluated by /upstream-sync.
 # Do not hand-edit unless reseeding via `scripts/upstream_sync.sh init --force`.
 upstream_url=https://github.com/mnemon-dev/mnemon.git
-last_sha=0fcb3b6999f085c943347dc18a9a6e8324483d8c
-last_sha_subject=fix(setup): support ZCode hooks on Windows
-last_sha_date=2026-08-22T17:47:36+08:00
+last_sha=eff9a46a18383129274296f94eff5bbe5bcce724
+last_sha_subject=feat: add MiniMax Code memory integration
+last_sha_date=2026-08-22T17:53:46+08:00
