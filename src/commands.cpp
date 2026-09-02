@@ -213,6 +213,15 @@ static void emit_remember_event(const std::string& insight_id, const std::string
   try { emit_harness_event(opts); } catch (...) {}
 }
 
+// Reject mutating command paths early when --readonly is active, with a stable,
+// actionable error before any command work begins. The store layer still opens
+// SQLite mode=ro as defense in depth.
+static void require_writable_mode(const std::string& action) {
+  if (g_readonly) {
+    throw std::runtime_error(action + " is unavailable with --readonly: database writes are disabled");
+  }
+}
+
 static std::unique_ptr<mnemon::Database> open_db() {
   std::string name = resolve_store();
   if (!mnemon::paths::valid_store_name(name)) {
@@ -361,7 +370,7 @@ int run_mnemon(int argc, char** argv) {
   g_data_dir = mnemon::paths::default_data_dir();
   app.add_option("--data-dir", g_data_dir, "base data directory (env: MNEMON_DATA_DIR)");
   app.add_option("--store", g_store_flag, "named memory store (overrides MNEMON_STORE and active file)");
-  app.add_flag("--readonly", g_readonly, "open database in read-only mode");
+  app.add_flag("--readonly", g_readonly, "open an immutable database snapshot (reject writes; create no WAL files)");
   app.add_option("--embed-model", g_embed_model, "embedding model (env: MNEMON_EMBED_MODEL; default: nomic-embed-text)");
 
   auto trunc8 = [](const std::string& id) { return id.size() > 8 ? id.substr(0, 8) : id; };
@@ -385,6 +394,7 @@ int run_mnemon(int argc, char** argv) {
   remember->add_option("--entity-mode", rem_entity_mode, "entity extraction mode: merge, provided, auto");
   remember->add_flag("--no-diff", rem_no_diff);
   remember->callback([&] {
+    require_writable_mode("remember");
     std::string rem_content;
     for (size_t i = 0; i < rem_parts.size(); ++i) {
       if (i) {
@@ -731,6 +741,7 @@ int run_mnemon(int argc, char** argv) {
   link->add_option("--weight", l_weight);
   link->add_option("--meta", l_meta);
   link->callback([&] {
+    require_writable_mode("link");
     auto et = mnemon::parse_edge_type(l_type);
     if (!et) {
       throw CLI::ValidationError("invalid edge type \"" + l_type + "\"; valid: temporal, semantic, causal, entity");
@@ -824,6 +835,7 @@ int run_mnemon(int argc, char** argv) {
   std::string forg_id;
   forget->add_option("id", forg_id)->required();
   forget->callback([&] {
+    require_writable_mode("forget");
     auto db = open_db();
     db->soft_delete_insight(forg_id);
     db->log_op("forget", forg_id, "");
@@ -843,6 +855,7 @@ int run_mnemon(int argc, char** argv) {
     require_non_negative_float("--threshold", gc_thr);
     auto db = open_db();
     if (!gc_keep.empty()) {
+      require_writable_mode("gc --keep");
       auto ins = db->get_insight_by_id(gc_keep);
       if (!ins) {
         throw std::runtime_error("insight " + gc_keep + " not found");
@@ -911,6 +924,7 @@ int run_mnemon(int argc, char** argv) {
                                  {"model", oc.model}});
       return;
     }
+    require_writable_mode("embed");
     if (!embedding_available) {
       if (oc.protocol_string() == "ollama") {
         throw std::runtime_error("Ollama embedding provider not available at " + oc.endpoint +
@@ -1073,6 +1087,7 @@ int run_mnemon(int argc, char** argv) {
   std::string st_name;
   st_create->add_option("name", st_name)->required();
   st_create->callback([&] {
+    require_writable_mode("store create");
     if (!mnemon::paths::valid_store_name(st_name)) {
       throw CLI::ValidationError("invalid store name \"" + st_name + "\": must match [a-zA-Z0-9][a-zA-Z0-9_-]*");
     }
@@ -1088,6 +1103,7 @@ int run_mnemon(int argc, char** argv) {
   std::string st_setname;
   st_set->add_option("name", st_setname)->required();
   st_set->callback([&] {
+    require_writable_mode("store set");
     if (!mnemon::paths::valid_store_name(st_setname)) {
       throw CLI::ValidationError("invalid store name \"" + st_setname + "\": must match [a-zA-Z0-9][a-zA-Z0-9_-]*");
     }
@@ -1104,6 +1120,7 @@ int run_mnemon(int argc, char** argv) {
   std::string st_remname;
   st_rem->add_option("name", st_remname)->required();
   st_rem->callback([&] {
+    require_writable_mode("store remove");
     if (!mnemon::paths::valid_store_name(st_remname)) {
       throw CLI::ValidationError("invalid store name \"" + st_remname + "\": must match [a-zA-Z0-9][a-zA-Z0-9_-]*");
     }
@@ -1184,6 +1201,7 @@ int run_mnemon(int argc, char** argv) {
   import_cmd->add_flag("--no-diff", import_no_diff, "skip deduplication; insert all insights as new");
   import_cmd->add_flag("--dry-run", import_dry_run, "validate the draft file without writing to the database");
   import_cmd->callback([&] {
+    require_writable_mode("import");
     // --- parse and validate draft ---
     std::ifstream f(import_file, std::ios::binary);
     if (!f) {

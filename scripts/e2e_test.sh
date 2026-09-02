@@ -962,6 +962,47 @@ assert_jq "import prunes nothing when unlimited" "$OUT" '.auto_pruned' '0'
 
 
 # ══════════════════════════════════════════════════════════════════════
+banner "Read-Only Mode Enforcement (--readonly)"
+# ══════════════════════════════════════════════════════════════════════
+
+RODIR="$TESTDATA/readonly"
+mkdir -p "$RODIR"
+RO_ID=$($M --data-dir "$RODIR" remember --no-diff "Readonly seed insight" --cat fact --imp 3 | jq -r '.id')
+
+step "readonly — remember is rejected with an actionable error"
+OUT=$($M --data-dir "$RODIR" --readonly remember --no-diff "should fail" --cat fact 2>&1 || true)
+assert_contains "remember rejected" "$OUT" "remember is unavailable with --readonly: database writes are disabled"
+
+step "readonly — reads still work"
+OUT=$($M --data-dir "$RODIR" --readonly recall "Readonly seed" 2>&1 || true)
+assert_contains "recall works readonly" "$OUT" "Readonly seed insight"
+
+step "readonly — forget is rejected"
+OUT=$($M --data-dir "$RODIR" --readonly forget "$RO_ID" 2>&1 || true)
+assert_contains "forget rejected" "$OUT" "forget is unavailable with --readonly"
+
+step "readonly — gc --keep is rejected but plain gc reports"
+OUT=$($M --data-dir "$RODIR" --readonly gc --keep "$RO_ID" 2>&1 || true)
+assert_contains "gc --keep rejected" "$OUT" "gc --keep is unavailable with --readonly"
+OUT=$($M --data-dir "$RODIR" --readonly gc --threshold 0.7 2>&1 || true)
+assert_contains "plain gc reports readonly" "$OUT" '"candidates"'
+
+step "readonly — store create is rejected"
+OUT=$($M --data-dir "$RODIR" --readonly store create extra 2>&1 || true)
+assert_contains "store create rejected" "$OUT" "store create is unavailable with --readonly"
+
+step "readonly — embed --status works, embed --all rejected"
+OUT=$($M --data-dir "$RODIR" --readonly embed --status 2>&1 || true)
+assert_contains "embed status readonly" "$OUT" '"embedding_available"'
+OUT=$($M --data-dir "$RODIR" --readonly embed --all 2>&1 || true)
+assert_contains "embed write rejected" "$OUT" "embed is unavailable with --readonly"
+
+step "readonly — rejected writes leave data unchanged"
+OUT=$($M --data-dir "$RODIR" --readonly status 2>&1 || true)
+assert_jq "one insight remains" "$OUT" '.total_insights' '1'
+
+
+# ══════════════════════════════════════════════════════════════════════
 banner "Milestone 11: Smart Recall Reranking + Signals"
 # ══════════════════════════════════════════════════════════════════════
 
