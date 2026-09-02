@@ -53,6 +53,9 @@ set(ASSET_DEPS
   "${ASSET_ROOT}/zcode/prime.sh"
   "${ASSET_ROOT}/zcode/user_prompt.sh"
   "${ASSET_ROOT}/zcode/stop.sh"
+  "${ASSET_ROOT}/zcode/prime.ps1"
+  "${ASSET_ROOT}/zcode/user_prompt.ps1"
+  "${ASSET_ROOT}/zcode/stop.ps1"
   "${ASSET_ROOT}/trae/SKILL.md"
   "${ASSET_ROOT}/trae/prime.sh"
   "${ASSET_ROOT}/trae/user_prompt.sh"
@@ -154,6 +157,7 @@ add_executable(mnemon
   src/graph_engine.cpp
   src/graph_bfs.cpp
   src/setup.cpp
+  src/zcode_hooks.cpp
   src/yaml_lite.cpp
   src/viz.cpp
   src/commands.cpp
@@ -188,7 +192,9 @@ if(BUILD_TESTING)
     tests/ollama_test.cpp
     tests/time_util_test.cpp
     tests/yaml_lite_test.cpp
+    tests/zcode_hooks_test.cpp
     tests/db_test.cpp
+    src/zcode_hooks.cpp
     src/diff.cpp
     src/tokenize.cpp
     src/keyword.cpp

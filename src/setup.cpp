@@ -5,6 +5,7 @@
 #include "embedded_assets.hpp"
 #include "paths.hpp"
 #include "yaml_lite.hpp"
+#include "zcode_hooks.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -2476,15 +2477,6 @@ static bool install_openclaw(const Environment& env, bool global, bool setup_yes
 // hooks.events map; project-level hooks are unsupported upstream, so local
 // installs write only the skill.
 
-static nlohmann::json zcode_process_hook(const std::string& script_path, const std::string& status) {
-  return nlohmann::json{{"type", "process"},
-                        {"command", "bash"},
-                        {"args", nlohmann::json::array({script_path})},
-                        {"enabled", true},
-                        {"timeoutMs", 30000},
-                        {"statusMessage", status}};
-}
-
 static void zcode_remove_hooks(nlohmann::json& data) {
   if (!data.contains("hooks") || !data["hooks"].is_object()) {
     return;
@@ -2531,18 +2523,21 @@ static void zcode_add_hooks(nlohmann::json& data, const std::string& hooks_dir) 
     }
     slot.push_back(std::move(entry));
   };
-  auto join = [&](const char* f) { return (fs::path(hooks_dir) / f).string(); };
+  std::string_view goos = zcode_host_goos();
+  auto script = [&](const char* base) {
+    return (fs::path(hooks_dir) / zcode_hook_filename(base, goos)).string();
+  };
 
   append(events["SessionStart"],
          nlohmann::json{{"matcher", "startup|clear|compact"},
                         {"hooks", nlohmann::json::array(
-                                      {zcode_process_hook(join("prime.sh"), "Loading Mnemon context")})}});
+                                      {zcode_process_hook(script("prime"), "Loading Mnemon context", goos)})}});
   append(events["UserPromptSubmit"],
          nlohmann::json{{"hooks", nlohmann::json::array({zcode_process_hook(
-                                      join("user_prompt.sh"), "Checking Mnemon recall guidance")})}});
+                                      script("user_prompt"), "Checking Mnemon recall guidance", goos)})}});
   append(events["Stop"],
          nlohmann::json{{"hooks", nlohmann::json::array(
-                                      {zcode_process_hook(join("stop.sh"), "Checking Mnemon writeback guidance")})}});
+                                      {zcode_process_hook(script("stop"), "Checking Mnemon writeback guidance", goos)})}});
 }
 
 static bool install_zcode(const Environment& env, bool global, bool setup_yes) {
@@ -2584,9 +2579,14 @@ static bool install_zcode(const Environment& env, bool global, bool setup_yes) {
   }
 
   std::cout << "\n[3/" << total_steps << "] Hooks\n";
-  const std::array<HookFile, 3> hook_files = {{{"Hook: prime", "prime.sh", mnemon::embedded::zcode_prime_sh()},
-                                               {"Hook: remind", "user_prompt.sh", mnemon::embedded::zcode_user_prompt_sh()},
-                                               {"Hook: nudge", "stop.sh", mnemon::embedded::zcode_stop_sh()}}};
+  std::array<HookFile, 3> hook_files = {{{"Hook: prime", "prime.sh", mnemon::embedded::zcode_prime_sh()},
+                                         {"Hook: remind", "user_prompt.sh", mnemon::embedded::zcode_user_prompt_sh()},
+                                         {"Hook: nudge", "stop.sh", mnemon::embedded::zcode_stop_sh()}}};
+  if (zcode_host_goos() == "windows") {
+    hook_files = {{{"Hook: prime", "prime.ps1", mnemon::embedded::zcode_prime_ps1()},
+                   {"Hook: remind", "user_prompt.ps1", mnemon::embedded::zcode_user_prompt_ps1()},
+                   {"Hook: nudge", "stop.ps1", mnemon::embedded::zcode_stop_ps1()}}};
+  }
   if (!install_hook_files(hook_files,
                           [&](const HookFile& h) { return write_hook_file(config_dir, h.filename, h.content); })) {
     return false;
