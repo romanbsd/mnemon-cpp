@@ -977,6 +977,62 @@ assert_jq "import prunes nothing when unlimited" "$OUT" '.auto_pruned' '0'
 
 
 # ══════════════════════════════════════════════════════════════════════
+banner "Token-Friendly Brief Retrieval (--brief / show)"
+# ══════════════════════════════════════════════════════════════════════
+
+TDBRIEF="$TESTDATA/brief"
+mkdir -p "$TDBRIEF"
+BID=$($M --data-dir "$TDBRIEF" remember --no-diff "Alpha service handles authentication and authorization for the platform across many regions and teams worldwide" --cat decision --imp 4 | jq -r '.id')
+
+step "recall --brief — compact discovery projection"
+OUT=$($M --data-dir "$TDBRIEF" recall "Alpha service" --brief --excerpt-chars 30)
+assert_jq "brief has detail_command" "$OUT" '.detail_command' 'mnemon show <id>'
+assert_jq "brief result id matches" "$OUT" '.results[0].id' "$BID"
+assert_jq "brief result omits full content" "$OUT" '.results[0] | has("content")' 'false'
+assert_jq "brief excerpt truncated with ellipsis" "$OUT" '.results[0].excerpt | endswith("…")' 'true'
+assert_jq "brief smart result has confidence" "$OUT" '.results[0] | has("confidence")' 'true'
+
+step "recall --basic --brief — no score/confidence"
+OUT=$($M --data-dir "$TDBRIEF" recall "Alpha" --basic --brief)
+assert_jq "basic brief has category" "$OUT" '.results[0].category' 'decision'
+assert_jq "basic brief omits score" "$OUT" '.results[0] | has("score")' 'false'
+
+step "search --brief — score without confidence"
+OUT=$($M --data-dir "$TDBRIEF" search "Alpha" --brief)
+assert_jq "search brief has score" "$OUT" '.results[0] | has("score")' 'true'
+assert_jq "search brief omits confidence" "$OUT" '.results[0] | has("confidence")' 'false'
+
+step "--brief and --verbose are mutually exclusive"
+OUT=$($M --data-dir "$TDBRIEF" recall "Alpha" --brief --verbose 2>&1 || true)
+assert_contains "brief+verbose rejected" "$OUT" "brief and --verbose cannot be used together"
+
+step "--excerpt-chars must be positive under --brief"
+OUT=$($M --data-dir "$TDBRIEF" recall "Alpha" --brief --excerpt-chars 0 2>&1 || true)
+assert_contains "excerpt-chars 0 rejected" "$OUT" "excerpt-chars must be greater than 0"
+
+step "brief excerpt is Unicode-safe"
+$M --data-dir "$TDBRIEF" remember --no-diff "跨会话记忆测试内容需要足够长以触发截断逻辑" --cat fact --imp 3 > /dev/null
+OUT=$($M --data-dir "$TDBRIEF" recall "跨会话" --basic --brief --excerpt-chars 5)
+assert_jq "unicode excerpt ends with ellipsis" "$OUT" '.results[0].excerpt | endswith("…")' 'true'
+assert_jq "unicode excerpt keeps 5 codepoints" "$OUT" '.results[0].excerpt | length' '5'
+
+step "show — returns one full insight and logs the op"
+OUT=$($M --data-dir "$TDBRIEF" show "$BID")
+assert_jq "show id matches" "$OUT" '.id' "$BID"
+assert_contains "show returns full content" "$OUT" "across many regions and teams worldwide"
+LOG=$($M --data-dir "$TDBRIEF" log --limit 20)
+assert_contains "show op logged" "$LOG" "show"
+
+step "show — missing id errors"
+OUT=$($M --data-dir "$TDBRIEF" show "nonexistent-id" 2>&1 || true)
+assert_contains "show missing errors" "$OUT" "not found"
+
+step "search --brief — empty results omit detail_command"
+OUT=$($M --data-dir "$TDBRIEF" search "zzzznotarealtokenzzz" --brief)
+assert_jq "empty brief omits detail_command" "$OUT" 'has("detail_command")' 'false'
+
+
+# ══════════════════════════════════════════════════════════════════════
 banner "Read-Only Mode Enforcement (--readonly)"
 # ══════════════════════════════════════════════════════════════════════
 
