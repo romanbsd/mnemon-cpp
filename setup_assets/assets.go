@@ -56,6 +56,15 @@ var ZCodeUserPromptHook []byte
 //go:embed zcode/stop.sh
 var ZCodeStopHook []byte
 
+//go:embed zcode/prime.ps1
+var ZCodePrimeHookPowerShell []byte
+
+//go:embed zcode/user_prompt.ps1
+var ZCodeUserPromptHookPowerShell []byte
+
+//go:embed zcode/stop.ps1
+var ZCodeStopHookPowerShell []byte
+
 //go:embed trae/SKILL.md
 var TraeSkill []byte
 

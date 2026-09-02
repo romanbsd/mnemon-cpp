@@ -1,6 +1,6 @@
 ---
 name: mnemon
-description: Persistent memory CLI for LLM agents. Store facts, recall past knowledge, link related memories, manage lifecycle.
+description: Use persistent memory when prior preferences, decisions, constraints, or project history could affect a task, or when durable non-secret knowledge should be preserved.
 ---
 
 # mnemon
