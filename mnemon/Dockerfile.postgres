@@ -1,0 +1,12 @@
+FROM postgres:18-alpine
+
+RUN apk add --no-cache --virtual .build-deps \
+        git \
+        build-base \
+        clang19 \
+        llvm19-dev \
+    && git clone --depth 1 --branch v0.8.1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+    && make -C /tmp/pgvector \
+    && make -C /tmp/pgvector install \
+    && apk del .build-deps \
+    && rm -rf /tmp/pgvector

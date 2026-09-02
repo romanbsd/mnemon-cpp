@@ -1,0 +1,9 @@
+node_modules
+dist
+test
+src
+*.md
+package.json
+package-lock.json
+tsconfig*.json
+vitest.config.ts
