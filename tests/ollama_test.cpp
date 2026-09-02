@@ -101,6 +101,62 @@ TEST_CASE("MNEMON_EMBED_DIMENSIONS requires a positive integer") {
   }
 }
 
+TEST_CASE("OpenAI protocol uses /models and /embeddings without task prefixes") {
+  mnemon::OllamaClient client;
+  client.api = mnemon::EmbedApi::OpenAI;
+  client.model = "BAAI/bge-m3";
+  client.dimensions = 1024;
+
+  REQUIRE(client.protocol_string() == "openai");
+  REQUIRE(client.availability_path() == "/models");
+  REQUIRE(client.embedding_path() == "/embeddings");
+
+  const auto body = nlohmann::json::parse(client.embedding_request_json("跨会话记忆测试", mnemon::EmbedTask::Query));
+  REQUIRE(body["model"] == "BAAI/bge-m3");
+  REQUIRE(body["input"] == "跨会话记忆测试"); // no search_query prefix
+  REQUIRE(body["dimensions"] == 1024);
+  REQUIRE_FALSE(body.contains("encoding_format"));
+
+  REQUIRE(client.parse_embedding_response(R"({"data":[{"embedding":[0.1,0.2]}]})") ==
+          std::vector<float>{0.1F, 0.2F});
+}
+
+TEST_CASE("Ollama protocol reports protocol string ollama") {
+  mnemon::OllamaClient client;
+  REQUIRE(client.protocol_string() == "ollama");
+}
+
+TEST_CASE("MNEMON_EMBED_PROTOCOL and /v1 auto-detect select the OpenAI protocol") {
+  ScopedEnvironment api_env("MNEMON_EMBED_API");
+  ScopedEnvironment proto_env("MNEMON_EMBED_PROTOCOL");
+  ScopedEnvironment endpoint_env("MNEMON_EMBED_ENDPOINT");
+  ScopedEnvironment key_env("MNEMON_EMBED_API_KEY");
+  unsetenv("MNEMON_EMBED_API");
+
+  // Explicit protocol wins.
+  setenv("MNEMON_EMBED_PROTOCOL", "openai", 1);
+  unsetenv("MNEMON_EMBED_ENDPOINT");
+  REQUIRE(mnemon::OllamaClient::from_env().api == mnemon::EmbedApi::OpenAI);
+
+  // Invalid protocol falls back to auto-detect (no /v1 → ollama).
+  setenv("MNEMON_EMBED_PROTOCOL", "bogus", 1);
+  REQUIRE(mnemon::OllamaClient::from_env().api == mnemon::EmbedApi::Ollama);
+
+  // Auto-detect: endpoint path ending in /v1 → OpenAI.
+  unsetenv("MNEMON_EMBED_PROTOCOL");
+  setenv("MNEMON_EMBED_ENDPOINT", "http://localhost:8080/v1", 1);
+  REQUIRE(mnemon::OllamaClient::from_env().api == mnemon::EmbedApi::OpenAI);
+
+  // MNEMON_EMBED_API (legacy) takes precedence over auto-detect.
+  setenv("MNEMON_EMBED_API", "ollama", 1);
+  REQUIRE(mnemon::OllamaClient::from_env().api == mnemon::EmbedApi::Ollama);
+  unsetenv("MNEMON_EMBED_API");
+
+  // API key is read from the environment.
+  setenv("MNEMON_EMBED_API_KEY", "sk-test", 1);
+  REQUIRE(mnemon::OllamaClient::from_env().api_key == "sk-test");
+}
+
 TEST_CASE("configured embedding dimensions are validated") {
   mnemon::OllamaClient client;
   client.api = mnemon::EmbedApi::LlamaCpp;

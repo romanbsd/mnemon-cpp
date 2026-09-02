@@ -8,6 +8,7 @@ namespace mnemon {
 enum class EmbedApi {
   Ollama,
   LlamaCpp,
+  OpenAI,
 };
 
 enum class EmbedTask {
@@ -20,9 +21,14 @@ struct OllamaClient {
   std::string model;
   int dimensions{0};
   EmbedApi api{EmbedApi::Ollama};
+  std::string api_key; // Bearer token for OpenAI-compatible servers (empty = none)
 
   static OllamaClient from_env();
   static OllamaClient from_env_with_model(const std::string& model_override);
+
+  // Wire protocol as reported to callers: "ollama" for the Ollama API,
+  // "openai" for the OpenAI-compatible APIs (llama.cpp and generic openai).
+  std::string protocol_string() const;
 
   std::string availability_path() const;
   std::string embedding_path() const;
