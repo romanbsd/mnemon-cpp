@@ -13,6 +13,9 @@
 #include "model_json.hpp"
 #include "ollama.hpp"
 #include "paths.hpp"
+#ifdef MNEMON_WITH_POSTGRES
+#include "pg_store.hpp"
+#endif
 #include "recall.hpp"
 #include "setup.hpp"
 #include "time_util.hpp"
@@ -39,6 +42,7 @@ namespace fs = std::filesystem;
 
 static std::string g_data_dir;
 static std::string g_store_flag;
+static std::string g_database_url;
 static bool g_readonly = false;
 static std::string g_embed_model;
 
@@ -213,10 +217,31 @@ static void emit_remember_event(const std::string& insight_id, const std::string
   try { emit_harness_event(opts); } catch (...) {}
 }
 
+// --database-url flag, else MNEMON_DATABASE_URL. Empty => SQLite (default).
+static std::string resolve_database_url() {
+  if (!g_database_url.empty()) {
+    return g_database_url;
+  }
+  if (const char* e = std::getenv("MNEMON_DATABASE_URL"); e && *e) {
+    return e;
+  }
+  return {};
+}
+
+static bool pg_active() { return !resolve_database_url().empty(); }
+
 static std::unique_ptr<mnemon::Store> open_db() {
   std::string name = resolve_store();
   if (!mnemon::paths::valid_store_name(name)) {
     throw std::runtime_error("invalid store name \"" + name + "\"");
+  }
+  std::string dsn = resolve_database_url();
+  if (!dsn.empty()) {
+#ifdef MNEMON_WITH_POSTGRES
+    return g_readonly ? mnemon::pg::open_readonly(dsn, name) : mnemon::pg::open_readwrite(dsn, name);
+#else
+    throw std::runtime_error("postgres support not compiled in");
+#endif
   }
   std::string dir = mnemon::paths::store_dir(g_data_dir, name);
   if (g_readonly) {
@@ -226,6 +251,61 @@ static std::unique_ptr<mnemon::Store> open_db() {
     throw std::runtime_error("migrate failed");
   }
   return mnemon::Store::open_readwrite(dir);
+}
+
+// Store-management dispatch: Postgres schemas when a DSN is active, else the
+// filesystem store dirs. The `active` file stays on disk for both backends —
+// it only records a name.
+static std::vector<std::string> store_list() {
+  std::string dsn = resolve_database_url();
+  if (!dsn.empty()) {
+#ifdef MNEMON_WITH_POSTGRES
+    return mnemon::pg::list_stores(dsn);
+#else
+    throw std::runtime_error("postgres support not compiled in");
+#endif
+  }
+  return mnemon::paths::list_stores(g_data_dir);
+}
+
+static bool store_present(const std::string& name) {
+  std::string dsn = resolve_database_url();
+  if (!dsn.empty()) {
+#ifdef MNEMON_WITH_POSTGRES
+    return mnemon::pg::store_exists(dsn, name);
+#else
+    throw std::runtime_error("postgres support not compiled in");
+#endif
+  }
+  return mnemon::paths::store_exists(g_data_dir, name);
+}
+
+static void store_create(const std::string& name) {
+  std::string dsn = resolve_database_url();
+  if (!dsn.empty()) {
+#ifdef MNEMON_WITH_POSTGRES
+    mnemon::pg::create_store(dsn, name);
+    return;
+#else
+    throw std::runtime_error("postgres support not compiled in");
+#endif
+  }
+  std::string dir = mnemon::paths::store_dir(g_data_dir, name);
+  auto db = mnemon::Store::open_readwrite(dir);
+  db.reset();
+}
+
+static void store_remove(const std::string& name) {
+  std::string dsn = resolve_database_url();
+  if (!dsn.empty()) {
+#ifdef MNEMON_WITH_POSTGRES
+    mnemon::pg::remove_store(dsn, name);
+    return;
+#else
+    throw std::runtime_error("postgres support not compiled in");
+#endif
+  }
+  fs::remove_all(mnemon::paths::store_dir(g_data_dir, name));
 }
 
 static void require_positive_limit(const char* flag, int value) {
@@ -360,6 +440,8 @@ int run_mnemon(int argc, char** argv) {
 
   g_data_dir = mnemon::paths::default_data_dir();
   app.add_option("--data-dir", g_data_dir, "base data directory (env: MNEMON_DATA_DIR)");
+  app.add_option("--database-url", g_database_url,
+                 "PostgreSQL DSN (env: MNEMON_DATABASE_URL); selects the Postgres backend");
   app.add_option("--store", g_store_flag, "named memory store (overrides MNEMON_STORE and active file)");
   app.add_flag("--readonly", g_readonly, "open database in read-only mode");
   app.add_option("--embed-model", g_embed_model, "embedding model (env: MNEMON_EMBED_MODEL; default: nomic-embed-text)");
@@ -958,9 +1040,15 @@ int run_mnemon(int argc, char** argv) {
       te.push_back({{"entity", e.entity}, {"count", e.count}});
     }
     int64_t sz = 0;
-    if (fs::exists(db->path())) {
-      std::error_code ec;
-      sz = static_cast<int64_t>(fs::file_size(db->path(), ec));
+    std::string db_path;
+    if (pg_active()) {
+      db_path = db->path(); // sanitized DSN; no file on disk
+    } else {
+      if (fs::exists(db->path())) {
+        std::error_code ec;
+        sz = static_cast<int64_t>(fs::file_size(db->path(), ec));
+      }
+      db_path = fs::absolute(db->path()).string();
     }
     print_json(nlohmann::json{{"total_insights", st.total},
                               {"deleted_insights", st.deleted_count},
@@ -968,7 +1056,7 @@ int run_mnemon(int argc, char** argv) {
                               {"edge_count", st.edge_count},
                               {"top_entities", te},
                               {"oplog_count", st.oplog_count},
-                              {"db_path", fs::absolute(db->path()).string()},
+                              {"db_path", db_path},
                               {"db_size_bytes", sz}});
   });
 
@@ -1047,7 +1135,7 @@ int run_mnemon(int argc, char** argv) {
   auto* store = app.add_subcommand("store", "Store management");
   auto* st_list = store->add_subcommand("list", "List stores");
   st_list->callback([&] {
-    auto names = mnemon::paths::list_stores(g_data_dir);
+    auto names = store_list();
     if (names.empty()) {
       std::cout << "  (no stores yet — run 'mnemon store create <name>' or any command to create default)\n";
       return;
@@ -1065,12 +1153,10 @@ int run_mnemon(int argc, char** argv) {
     if (!mnemon::paths::valid_store_name(st_name)) {
       throw CLI::ValidationError("invalid store name \"" + st_name + "\": must match [a-zA-Z0-9][a-zA-Z0-9_-]*");
     }
-    if (mnemon::paths::store_exists(g_data_dir, st_name)) {
+    if (store_present(st_name)) {
       throw CLI::ValidationError("store \"" + st_name + "\" already exists");
     }
-    std::string dir = mnemon::paths::store_dir(g_data_dir, st_name);
-    auto db = mnemon::Store::open_readwrite(dir);
-    db.reset();
+    store_create(st_name);
     std::cout << "Created store \"" << st_name << "\"\n";
   });
   auto* st_set = store->add_subcommand("set", "Set active store");
@@ -1080,7 +1166,7 @@ int run_mnemon(int argc, char** argv) {
     if (!mnemon::paths::valid_store_name(st_setname)) {
       throw CLI::ValidationError("invalid store name \"" + st_setname + "\": must match [a-zA-Z0-9][a-zA-Z0-9_-]*");
     }
-    if (!mnemon::paths::store_exists(g_data_dir, st_setname)) {
+    if (!store_present(st_setname)) {
       throw std::runtime_error("store \"" + st_setname + "\" does not exist (use 'mnemon store create " + st_setname +
                               "' first)");
     }
@@ -1096,14 +1182,14 @@ int run_mnemon(int argc, char** argv) {
     if (!mnemon::paths::valid_store_name(st_remname)) {
       throw CLI::ValidationError("invalid store name \"" + st_remname + "\": must match [a-zA-Z0-9][a-zA-Z0-9_-]*");
     }
-    if (!mnemon::paths::store_exists(g_data_dir, st_remname)) {
+    if (!store_present(st_remname)) {
       throw std::runtime_error("store \"" + st_remname + "\" does not exist");
     }
     if (st_remname == resolve_store()) {
       throw std::runtime_error("cannot remove the active store \"" + st_remname +
                               "\" (switch first with 'mnemon store set <other>')");
     }
-    fs::remove_all(mnemon::paths::store_dir(g_data_dir, st_remname));
+    store_remove(st_remname);
     std::cout << "Removed store \"" << st_remname << "\"\n";
   });
 
