@@ -26,6 +26,14 @@ inline constexpr int kMaxInsightsUnlimited = std::numeric_limits<int>::max();
 // A value of 0 or below switches auto-pruning off (returns kMaxInsightsUnlimited);
 // an unparseable value warns on stderr and is ignored. Resolved at call time.
 int max_insights_limit();
+
+// Default grace period (seconds) protecting newborn insights from auto-prune.
+inline constexpr long kDefaultAutoPruneMinAgeSeconds = 24L * 60 * 60;
+
+// Auto-prune grace period in seconds. MNEMON_AUTO_PRUNE_MIN_AGE accepts a Go
+// duration ("24h", "30m"), an integer day suffix ("7d"), or "0" to disable the
+// grace. Invalid or negative values warn on stderr and fall back to the default.
+long auto_prune_min_age_seconds();
 inline constexpr int kPruneBatchSize = 10;
 inline constexpr int kMaxOplogEntries = 5000;
 
@@ -92,6 +100,11 @@ public:
 
   std::tuple<std::vector<RetentionCandidate>, int> get_retention_candidates(double threshold, int limit);
   int auto_prune(int max_insights, const std::vector<std::string>& exclude_ids);
+  // Like auto_prune but returns every soft-deleted id. trigger_insight_id, when
+  // non-empty, is written into each durable audit record so an operator can
+  // connect the retention side effect to its triggering write.
+  std::vector<std::string> auto_prune_with_result(int max_insights, const std::vector<std::string>& exclude_ids,
+                                                  const std::string& trigger_insight_id);
   void boost_retention(const std::string& id);
 
   std::vector<Insight> get_recent_insights_in_window(const std::string& exclude_id, double window_hours,
@@ -122,6 +135,10 @@ public:
   std::vector<Insight> get_active_insights_by_source_ordered(const std::string& source);
 
   void log_op(const std::string& operation, const std::string& insight_id, const std::string& detail);
+  // Durable variant of log_op: appends one op and throws on failure (or when the
+  // db is read-only). Use for destructive transitions whose state change and
+  // audit evidence must commit or roll back together, inside the same tx.
+  void record_op(const std::string& operation, const std::string& insight_id, const std::string& detail);
   std::vector<OplogEntry> get_oplog(int limit);
 
 private:

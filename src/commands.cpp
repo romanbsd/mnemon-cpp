@@ -518,7 +518,7 @@ int run_mnemon(int argc, char** argv) {
 
     mnemon::graph_eng::EdgeStats estats;
     double ei = 0;
-    int pruned = 0;
+    std::vector<std::string> pruned_ids;
     bool embedded = false;
 
     try {
@@ -538,7 +538,7 @@ int run_mnemon(int argc, char** argv) {
         }
         auto p = db->refresh_effective_importance(insight.id);
         ei = p.first;
-        pruned = db->auto_prune(mnemon::max_insights_limit(), {insight.id});
+        pruned_ids = db->auto_prune_with_result(mnemon::max_insights_limit(), {insight.id}, insight.id);
         db->log_op("remember", insight.id, insight.content);
       });
     } catch (...) {
@@ -583,7 +583,8 @@ int run_mnemon(int argc, char** argv) {
     o["causal_candidates"] = cj;
     o["embedded"] = embedded;
     o["effective_importance"] = ei;
-    o["auto_pruned"] = pruned;
+    o["auto_pruned"] = static_cast<int>(pruned_ids.size());
+    o["auto_pruned_ids"] = pruned_ids;
     if (!replaced_id.empty()) {
       o["replaced_id"] = replaced_id;
     }
@@ -1473,7 +1474,7 @@ int run_mnemon(int argc, char** argv) {
     }
 
     int edges_inserted = 0;
-    int pruned = 0;
+    std::vector<std::string> pruned_ids;
     try {
       db->in_transaction([&] {
         // insert explicit edges
@@ -1563,7 +1564,7 @@ int run_mnemon(int argc, char** argv) {
           db->refresh_effective_importance(id);
         }
 
-        pruned = db->auto_prune(mnemon::max_insights_limit(), {});
+        pruned_ids = db->auto_prune_with_result(mnemon::max_insights_limit(), {}, "");
       });
     } catch (const std::exception& ex) {
       throw std::runtime_error(std::string("finalize import graph: ") + ex.what());
@@ -1583,7 +1584,8 @@ int run_mnemon(int argc, char** argv) {
     summary["skipped"] = count_skipped;
     summary["errors"] = count_errors;
     summary["edges_inserted"] = edges_inserted;
-    summary["auto_pruned"] = pruned;
+    summary["auto_pruned"] = static_cast<int>(pruned_ids.size());
+    summary["auto_pruned_ids"] = pruned_ids;
     nlohmann::json res_arr = nlohmann::json::array();
     for (const auto& r : results) {
       nlohmann::json rj;

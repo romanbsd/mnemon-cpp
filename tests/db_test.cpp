@@ -6,6 +6,7 @@
 
 #include <sqlite3.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <random>
 #include <string>
@@ -87,7 +88,11 @@ TEST_CASE("auto_prune records an oplog entry for every pruned insight") {
     db->insert_insight(make_insight("audit-" + std::to_string(i)));
   }
 
+  // Disable the newborn grace period so the just-inserted rows are eligible;
+  // this test exercises the audit-logging path, not the age protection.
+  setenv("MNEMON_AUTO_PRUNE_MIN_AGE", "0", 1);
   int pruned = db->auto_prune(3, {});
+  unsetenv("MNEMON_AUTO_PRUNE_MIN_AGE");
   REQUIRE(pruned == 2);
 
   auto entries = db->get_oplog(50);
@@ -99,6 +104,26 @@ TEST_CASE("auto_prune records an oplog entry for every pruned insight") {
     }
   }
   REQUIRE(logged == pruned);
+}
+
+TEST_CASE("auto_prune_min_age_seconds parses durations, day suffixes, and rejects junk") {
+  setenv("MNEMON_AUTO_PRUNE_MIN_AGE", "0", 1);
+  CHECK(auto_prune_min_age_seconds() == 0);
+  setenv("MNEMON_AUTO_PRUNE_MIN_AGE", "24h", 1);
+  CHECK(auto_prune_min_age_seconds() == 24L * 3600);
+  setenv("MNEMON_AUTO_PRUNE_MIN_AGE", "7d", 1);
+  CHECK(auto_prune_min_age_seconds() == 7L * 24 * 3600);
+  setenv("MNEMON_AUTO_PRUNE_MIN_AGE", "30m", 1);
+  CHECK(auto_prune_min_age_seconds() == 1800);
+  setenv("MNEMON_AUTO_PRUNE_MIN_AGE", "1h30m", 1);
+  CHECK(auto_prune_min_age_seconds() == 5400);
+  // invalid and negative fall back to the 24h default
+  setenv("MNEMON_AUTO_PRUNE_MIN_AGE", "bogus", 1);
+  CHECK(auto_prune_min_age_seconds() == kDefaultAutoPruneMinAgeSeconds);
+  setenv("MNEMON_AUTO_PRUNE_MIN_AGE", "-5h", 1);
+  CHECK(auto_prune_min_age_seconds() == kDefaultAutoPruneMinAgeSeconds);
+  unsetenv("MNEMON_AUTO_PRUNE_MIN_AGE");
+  CHECK(auto_prune_min_age_seconds() == kDefaultAutoPruneMinAgeSeconds);
 }
 
 TEST_CASE("narrative-edge migration survives orphaned edges and actually runs under FK enforcement") {

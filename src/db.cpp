@@ -437,6 +437,7 @@ CREATE TABLE IF NOT EXISTS insights (
     entities    TEXT DEFAULT '[]',
     source      TEXT DEFAULT 'user',
     access_count INTEGER DEFAULT 0,
+    stored_at   TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
     deleted_at  TEXT
@@ -480,10 +481,31 @@ CREATE INDEX IF NOT EXISTS idx_oplog_created ON oplog(created_at);
   add_column_ignore_dup(db_, "ALTER TABLE insights ADD COLUMN embedding             BLOB");
   add_column_ignore_dup(db_, "ALTER TABLE insights ADD COLUMN effective_importance  REAL DEFAULT 0.5");
 
+  // Retention grace is based on when a row entered this store, not its historical
+  // event time. Existing rows predate that distinction, so their created_at is
+  // the least surprising backfill. The column stays nullable for compatibility
+  // with external sync/import tools that write legacy rows.
+  add_column_ignore_dup(db_, "ALTER TABLE insights ADD COLUMN stored_at TEXT");
+  exec_sql("UPDATE insights SET stored_at = created_at WHERE stored_at IS NULL OR stored_at = ''");
+  // Keep legacy/external writers safe when they omit the new column. SQLite
+  // cannot add a column with a non-constant CURRENT_TIMESTAMP default during
+  // migration, so a trigger supplies the physical insertion time instead.
+  exec_sql(R"SQL(
+CREATE TRIGGER IF NOT EXISTS set_insight_stored_at
+AFTER INSERT ON insights
+WHEN NEW.stored_at IS NULL OR NEW.stored_at = ''
+BEGIN
+    UPDATE insights
+    SET stored_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    WHERE id = NEW.id;
+END)SQL");
+  exec_sql("CREATE INDEX IF NOT EXISTS idx_insights_stored ON insights(stored_at)");
+
   migrate_embeddings_to_float32();
 
   exec_sql("CREATE INDEX IF NOT EXISTS idx_insights_effective_imp ON insights(effective_importance)");
   exec_sql("CREATE INDEX IF NOT EXISTS idx_prune_candidates ON insights(deleted_at, importance, access_count, effective_importance)");
+  exec_sql("CREATE INDEX IF NOT EXISTS idx_prune_age_candidates ON insights(deleted_at, importance, access_count, stored_at, effective_importance)");
 
   migrate_remove_narrative_edges();
 
@@ -581,7 +603,7 @@ void Database::insert_insight(const Insight& i) {
   nlohmann::json ej = i.entities;
   Statement st(db_,
                "INSERT INTO insights (id, content, category, importance, tags, entities, source, access_count, "
-               "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)");
+               "stored_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
   st.bind_text(1, i.id);
   st.bind_text(2, i.content);
   st.bind_text(3, i.category);
@@ -590,8 +612,9 @@ void Database::insert_insight(const Insight& i) {
   st.bind_text(6, ej.dump());
   st.bind_text(7, i.source);
   st.bind_int(8, i.access_count);
-  st.bind_text(9, time_util::rfc3339_utc(i.created_at));
-  st.bind_text(10, time_util::rfc3339_utc(i.updated_at));
+  st.bind_text(9, time_util::rfc3339_utc(time_util::now_utc()));
+  st.bind_text(10, time_util::rfc3339_utc(i.created_at));
+  st.bind_text(11, time_util::rfc3339_utc(i.updated_at));
   st.step();
 }
 
@@ -864,8 +887,135 @@ int max_insights_limit() {
   return n;
 }
 
+namespace {
+
+// Formats a whole-second duration the way Go's time.Duration.String() does for
+// the values we emit: "0s", "30s", "5m0s", "24h0m0s". Used only for oplog detail.
+std::string format_go_duration(long seconds) {
+  if (seconds == 0) {
+    return "0s";
+  }
+  bool neg = seconds < 0;
+  long s = neg ? -seconds : seconds;
+  long h = s / 3600;
+  long m = (s % 3600) / 60;
+  long sec = s % 60;
+  std::string out;
+  if (h > 0) {
+    out = std::to_string(h) + "h" + std::to_string(m) + "m" + std::to_string(sec) + "s";
+  } else if (m > 0) {
+    out = std::to_string(m) + "m" + std::to_string(sec) + "s";
+  } else {
+    out = std::to_string(sec) + "s";
+  }
+  return neg ? "-" + out : out;
+}
+
+// Parses MNEMON_AUTO_PRUNE_MIN_AGE: an integer day suffix ("7d") or a Go-style
+// h/m/s duration ("24h", "30m", "1h30m", "0"). Returns false on invalid or
+// negative input.
+bool parse_auto_prune_min_age(const std::string& raw, long& out_seconds) {
+  std::string s;
+  for (char c : raw) {
+    s += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (s.empty()) {
+    return false;
+  }
+  if (s.back() == 'd') {
+    std::string num = s.substr(0, s.size() - 1);
+    try {
+      size_t pos = 0;
+      long long days = std::stoll(num, &pos);
+      if (pos != num.size() || days < 0) {
+        return false;
+      }
+      if (days > (9223372036854775807LL / 86400)) {
+        return false;
+      }
+      out_seconds = static_cast<long>(days * 86400);
+      return true;
+    } catch (const std::exception&) {
+      return false;
+    }
+  }
+  if (s == "0") {
+    out_seconds = 0;
+    return true;
+  }
+  // Go-style h/m/s: sequence of <integer><unit>. No sub-second units needed.
+  long total = 0;
+  size_t i = 0;
+  bool any = false;
+  while (i < s.size()) {
+    if (!std::isdigit(static_cast<unsigned char>(s[i]))) {
+      return false;
+    }
+    long long num = 0;
+    while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
+      num = num * 10 + (s[i] - '0');
+      ++i;
+      if (num > 9223372036854775LL) {
+        return false;
+      }
+    }
+    if (i >= s.size()) {
+      return false; // trailing number with no unit
+    }
+    char unit = s[i++];
+    long mult = 0;
+    if (unit == 'h') {
+      mult = 3600;
+    } else if (unit == 'm') {
+      mult = 60;
+    } else if (unit == 's') {
+      mult = 1;
+    } else {
+      return false;
+    }
+    total += static_cast<long>(num) * mult;
+    any = true;
+  }
+  if (!any) {
+    return false;
+  }
+  out_seconds = total;
+  return true;
+}
+
+} // namespace
+
+long auto_prune_min_age_seconds() {
+  const char* raw = std::getenv("MNEMON_AUTO_PRUNE_MIN_AGE");
+  if (!raw) {
+    return kDefaultAutoPruneMinAgeSeconds;
+  }
+  std::string s(raw);
+  auto notspace = [](unsigned char c) { return !std::isspace(c); };
+  s.erase(s.begin(), std::find_if(s.begin(), s.end(), notspace));
+  s.erase(std::find_if(s.rbegin(), s.rend(), notspace).base(), s.end());
+  if (s.empty()) {
+    return kDefaultAutoPruneMinAgeSeconds;
+  }
+  long parsed = 0;
+  if (!parse_auto_prune_min_age(s, parsed)) {
+    std::cerr << "warning: invalid MNEMON_AUTO_PRUNE_MIN_AGE \"" << s << "\" (using "
+              << format_go_duration(kDefaultAutoPruneMinAgeSeconds) << ")\n";
+    return kDefaultAutoPruneMinAgeSeconds;
+  }
+  return parsed;
+}
+
 int Database::auto_prune(int max_insights, const std::vector<std::string>& exclude_ids) {
-  int pruned = 0;
+  return static_cast<int>(auto_prune_with_result(max_insights, exclude_ids, "").size());
+}
+
+std::vector<std::string> Database::auto_prune_with_result(int max_insights,
+                                                          const std::vector<std::string>& exclude_ids,
+                                                          const std::string& trigger_insight_id) {
+  const long min_age = auto_prune_min_age_seconds();
+  const std::string min_age_str = format_go_duration(min_age);
+  std::vector<std::string> pruned_ids;
   auto run = [&] {
     Statement ct(db_, "SELECT COUNT(*) FROM insights WHERE deleted_at IS NULL");
     ct.step();
@@ -878,9 +1028,6 @@ int Database::auto_prune(int max_insights, const std::vector<std::string>& exclu
       excess = kPruneBatchSize;
     }
     std::string q = "SELECT id FROM insights WHERE deleted_at IS NULL AND importance < 4 AND access_count < 3 ";
-    for (const auto& e : exclude_ids) {
-      (void)e;
-    }
     if (!exclude_ids.empty()) {
       q += "AND id NOT IN (";
       for (size_t i = 0; i < exclude_ids.size(); ++i) {
@@ -891,12 +1038,19 @@ int Database::auto_prune(int max_insights, const std::vector<std::string>& exclu
       }
       q += ") ";
     }
-    q += "ORDER BY effective_importance ASC LIMIT ?";
+    // Protect newborn insights: only rows whose store-entry time is at or before
+    // the grace cutoff are eligible. Deterministic tie-break for stable pruning.
+    q += "AND julianday(COALESCE(stored_at, created_at)) <= julianday(?) ";
+    q += "ORDER BY effective_importance ASC, created_at ASC, id ASC LIMIT ?";
     Statement st(db_, q.c_str());
     int bi = 1;
     for (const auto& e : exclude_ids) {
       st.bind_text(bi++, e);
     }
+    // now - min_age, computed here so the just-inserted trigger row (stored now)
+    // is excluded under the default grace but eligible when min_age is 0.
+    std::string cutoff = time_util::rfc3339_utc(time_util::now_utc() - std::chrono::seconds(min_age));
+    st.bind_text(bi++, cutoff);
     st.bind_int(bi, excess);
     std::vector<std::string> ids;
     while (st.step()) {
@@ -913,10 +1067,15 @@ int Database::auto_prune(int max_insights, const std::vector<std::string>& exclu
         delete_edges_by_node(id);
         // Auto-prune is the only destructive path that leaves no trace otherwise —
         // every other write the CLI makes (remember, forget, link, import, embed)
-        // records an oplog entry.
-        log_op("prune", id, "auto-prune: over capacity (active=" + std::to_string(total) +
-                                 ", max=" + std::to_string(max_insights) + ")");
-        pruned++;
+        // records an oplog entry. The audit must commit with the deletion, so use
+        // the transactional record_op (throws to roll back on failure).
+        std::string detail = "auto-prune: over capacity (active=" + std::to_string(total) +
+                             ", max=" + std::to_string(max_insights) + ", min_age=" + min_age_str + ")";
+        if (!trigger_insight_id.empty()) {
+          detail += " trigger=" + trigger_insight_id;
+        }
+        record_op("prune", id, detail);
+        pruned_ids.push_back(id);
       }
     }
   };
@@ -925,7 +1084,7 @@ int Database::auto_prune(int max_insights, const std::vector<std::string>& exclu
   } else {
     in_transaction(run);
   }
-  return pruned;
+  return pruned_ids;
 }
 
 void Database::boost_retention(const std::string& id) {
@@ -1210,6 +1369,28 @@ void Database::log_op(const std::string& operation, const std::string& insight_i
     }
   } catch (const std::exception& ex) {
     std::cerr << "warning: oplog: " << ex.what() << "\n";
+  }
+}
+
+void Database::record_op(const std::string& operation, const std::string& insight_id, const std::string& detail) {
+  if (readonly_) {
+    throw std::runtime_error("database is read-only");
+  }
+  Statement st(db_, "INSERT INTO oplog (operation, insight_id, detail, created_at) VALUES (?,?,?,?)");
+  st.bind_text(1, operation);
+  if (insight_id.empty()) {
+    st.bind_null(2);
+  } else {
+    st.bind_text(2, insight_id);
+  }
+  st.bind_text(3, detail);
+  st.bind_text(4, time_util::rfc3339_utc(time_util::now_utc()));
+  st.step();
+  const auto inserted_id = sqlite3_last_insert_rowid(db_);
+  if (inserted_id > kMaxOplogEntries && inserted_id % kOplogTrimInterval == 0) {
+    Statement tr(db_, "DELETE FROM oplog WHERE id <= (SELECT MAX(id) FROM oplog) - ?");
+    tr.bind_int(1, kMaxOplogEntries);
+    tr.step();
   }
 }
 
