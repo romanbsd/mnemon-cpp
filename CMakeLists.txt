@@ -176,6 +176,16 @@ if(APPLE)
   target_link_libraries(mnemon PRIVATE "-framework Accelerate")
 endif()
 
+# Optional PostgreSQL + pgvector backend (docs/postgres-pgvector.md).
+# OFF by default: the stock build has no libpq dependency and is byte-identical.
+option(MNEMON_WITH_POSTGRES "Build with the PostgreSQL/pgvector backend (libpq)" OFF)
+if(MNEMON_WITH_POSTGRES)
+  find_package(PostgreSQL REQUIRED)
+  target_sources(mnemon PRIVATE src/pg_store.cpp)
+  target_link_libraries(mnemon PRIVATE PostgreSQL::PostgreSQL)
+  target_compile_definitions(mnemon PRIVATE MNEMON_WITH_POSTGRES)
+endif()
+
 option(BUILD_TESTING "Build unit tests" ON)
 if(BUILD_TESTING)
   enable_testing()
