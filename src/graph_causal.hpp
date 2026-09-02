@@ -1,6 +1,6 @@
 #pragma once
 
-#include "db.hpp"
+#include "store.hpp"
 #include "model.hpp"
 
 #include <string>
@@ -8,7 +8,7 @@
 
 namespace mnemon::graph_eng {
 
-int create_causal_edges(Database& db, Insight& insight);
+int create_causal_edges(Store& db, Insight& insight);
 
 struct CausalCandidate {
   std::string id;
@@ -20,6 +20,6 @@ struct CausalCandidate {
   std::string suggested_sub_type;
 };
 
-std::vector<CausalCandidate> find_causal_candidates(Database& db, const Insight& insight);
+std::vector<CausalCandidate> find_causal_candidates(Store& db, const Insight& insight);
 
 } // namespace mnemon::graph_eng

@@ -7,7 +7,7 @@
 
 namespace mnemon {
 
-class Database;
+class Store;
 
 namespace graph_eng {
 
@@ -18,7 +18,7 @@ struct EdgeStats {
   int semantic{0};
 };
 
-EdgeStats on_insight_created(Database& db, Insight& insight, EmbedCache* embed_cache,
+EdgeStats on_insight_created(Store& db, Insight& insight, EmbedCache* embed_cache,
                              const std::string& entity_mode = "merge",
                              bool temporal_disabled = false);
 

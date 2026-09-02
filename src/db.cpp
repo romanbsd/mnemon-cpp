@@ -234,17 +234,17 @@ void Statement::reset() {
   sqlite3_reset(stmt_);
 }
 
-// --- Database ---
+// --- SqliteStore ---
 
-Database::Database(sqlite3* h, std::string path, bool readonly) : db_(h), path_(std::move(path)), readonly_(readonly) {}
+SqliteStore::SqliteStore(sqlite3* h, std::string path, bool readonly) : db_(h), path_(std::move(path)), readonly_(readonly) {}
 
-Database::~Database() {
+SqliteStore::~SqliteStore() {
   if (db_) {
     sqlite3_close(db_);
   }
 }
 
-void Database::exec_sql(const char* sql) {
+void SqliteStore::exec_sql(const char* sql) {
   char* err = nullptr;
   int rc = sqlite3_exec(db_, sql, nullptr, nullptr, &err);
   if (rc != SQLITE_OK) {
@@ -273,27 +273,36 @@ static void exec_begin_immediate_with_retry(sqlite3* db) {
   }
 }
 
-std::unique_ptr<Database> Database::open_readwrite(const std::string& data_dir) {
+std::unique_ptr<SqliteStore> SqliteStore::open_readwrite(const std::string& data_dir) {
   fs::create_directories(data_dir);
   std::string dbpath = (fs::path(data_dir) / "mnemon.db").string();
   sqlite3* h = open_sqlite(dbpath, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, "open database");
-  auto db = std::unique_ptr<Database>(new Database(h, dbpath, false));
+  auto db = std::unique_ptr<SqliteStore>(new SqliteStore(h, dbpath, false));
   db->exec_sql("PRAGMA journal_mode=WAL;");
   db->exec_sql("PRAGMA foreign_keys=ON;");
   db->migrate();
   return db;
 }
 
-std::unique_ptr<Database> Database::open_readonly(const std::string& data_dir) {
+std::unique_ptr<SqliteStore> SqliteStore::open_readonly(const std::string& data_dir) {
   fs::path dbpath = fs::path(data_dir) / "mnemon.db";
   if (!fs::exists(dbpath)) {
     throw std::runtime_error("database not found: " + dbpath.string());
   }
   std::string uri = sqlite_readonly_uri(dbpath);
   sqlite3* h = open_sqlite(uri, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, "open readonly database");
-  auto db = std::unique_ptr<Database>(new Database(h, dbpath.string(), true));
+  auto db = std::unique_ptr<SqliteStore>(new SqliteStore(h, dbpath.string(), true));
   db->exec_sql("PRAGMA foreign_keys=ON;");
   return db;
+}
+
+// Backend factory. No config to inspect yet — SQLite is the only backend.
+// A Postgres DSN would branch here (docs/postgres-pgvector.md §2.2, §4).
+std::unique_ptr<Store> Store::open_readwrite(const std::string& data_dir) {
+  return SqliteStore::open_readwrite(data_dir);
+}
+std::unique_ptr<Store> Store::open_readonly(const std::string& data_dir) {
+  return SqliteStore::open_readonly(data_dir);
 }
 
 static void add_column_ignore_dup(sqlite3* db, const char* stmt) {
@@ -328,7 +337,7 @@ static void add_column_ignore_dup(sqlite3* db, const char* stmt) {
 // enforcement was off) would otherwise abort that copy on every open,
 // stranding the database permanently. Orphans are copied verbatim rather than
 // filtered out — dropping them would be a silent data deletion.
-void Database::migrate_remove_narrative_edges() {
+void SqliteStore::migrate_remove_narrative_edges() {
   exec_sql("PRAGMA foreign_keys=OFF");
   try {
     exec_sql("BEGIN");
@@ -382,7 +391,7 @@ void Database::migrate_remove_narrative_edges() {
 // to float32 (4 bytes/dim — half the storage, ample precision for cosine
 // ranking). Gated by PRAGMA user_version so it runs exactly once per database;
 // new and already-migrated databases write float32 directly via serialize_vector.
-void Database::migrate_embeddings_to_float32() {
+void SqliteStore::migrate_embeddings_to_float32() {
   Statement uv(db_, "PRAGMA user_version");
   uv.step();
   if (uv.column_int(0) >= kEmbeddingFloat32UserVersion) {
@@ -425,7 +434,7 @@ void Database::migrate_embeddings_to_float32() {
 }
 
 // Idempotent DDL: base tables + incremental ALTERs; narrative edge/category cleanup matches Go migrations.
-void Database::migrate() {
+void SqliteStore::migrate() {
   const char* schema = R"SQL(
 CREATE TABLE IF NOT EXISTS insights (
     id          TEXT PRIMARY KEY,
@@ -496,7 +505,7 @@ CREATE INDEX IF NOT EXISTS idx_oplog_created ON oplog(created_at);
 }
 
 // Re-entrant depth counter: nested callers share one BEGIN/COMMIT pair.
-void Database::in_transaction(std::function<void()> fn) {
+void SqliteStore::in_transaction(std::function<void()> fn) {
   const bool outermost = tx_depth_ == 0;
   if (outermost) {
     exec_begin_immediate_with_retry(db_);
@@ -524,7 +533,7 @@ void Database::in_transaction(std::function<void()> fn) {
   }
 }
 
-Insight Database::scan_insight_row(Statement& st) {
+Insight SqliteStore::scan_insight_row(Statement& st) {
   Insight i;
   i.id = st.column_text(0);
   i.content = st.column_text(1);
@@ -544,7 +553,7 @@ Insight Database::scan_insight_row(Statement& st) {
   return i;
 }
 
-std::vector<Insight> Database::scan_insight_rows(Statement& st) {
+std::vector<Insight> SqliteStore::scan_insight_rows(Statement& st) {
   std::vector<Insight> rows;
   while (st.step()) {
     rows.push_back(scan_insight_row(st));
@@ -552,7 +561,7 @@ std::vector<Insight> Database::scan_insight_rows(Statement& st) {
   return rows;
 }
 
-Edge Database::scan_edge_row(Statement& st) {
+Edge SqliteStore::scan_edge_row(Statement& st) {
   Edge e;
   e.source_id = st.column_text(0);
   e.target_id = st.column_text(1);
@@ -567,7 +576,7 @@ Edge Database::scan_edge_row(Statement& st) {
   return e;
 }
 
-std::vector<Edge> Database::scan_edge_rows(Statement& st) {
+std::vector<Edge> SqliteStore::scan_edge_rows(Statement& st) {
   std::vector<Edge> rows;
   while (st.step()) {
     rows.push_back(scan_edge_row(st));
@@ -575,7 +584,7 @@ std::vector<Edge> Database::scan_edge_rows(Statement& st) {
   return rows;
 }
 
-void Database::insert_insight(const Insight& i) {
+void SqliteStore::insert_insight(const Insight& i) {
   nlohmann::json tj = i.tags;
   nlohmann::json ej = i.entities;
   Statement st(db_,
@@ -594,7 +603,7 @@ void Database::insert_insight(const Insight& i) {
   st.step();
 }
 
-std::optional<Insight> Database::get_insight_by_id(const std::string& id) {
+std::optional<Insight> SqliteStore::get_insight_by_id(const std::string& id) {
   Statement st(db_,
                "SELECT id, content, category, importance, tags, entities, source, access_count, created_at, "
                "updated_at, deleted_at FROM insights WHERE id = ? AND deleted_at IS NULL");
@@ -605,7 +614,7 @@ std::optional<Insight> Database::get_insight_by_id(const std::string& id) {
   return scan_insight_row(st);
 }
 
-std::optional<Insight> Database::get_insight_by_id_include_deleted(const std::string& id) {
+std::optional<Insight> SqliteStore::get_insight_by_id_include_deleted(const std::string& id) {
   Statement st(db_,
                "SELECT id, content, category, importance, tags, entities, source, access_count, created_at, "
                "updated_at, deleted_at FROM insights WHERE id = ?");
@@ -616,7 +625,7 @@ std::optional<Insight> Database::get_insight_by_id_include_deleted(const std::st
   return scan_insight_row(st);
 }
 
-std::vector<Insight> Database::query_insights(const QueryFilter& f) {
+std::vector<Insight> SqliteStore::query_insights(const QueryFilter& f) {
   std::string q = "SELECT id, content, category, importance, tags, entities, source, access_count, created_at, "
                   "updated_at, deleted_at FROM insights WHERE deleted_at IS NULL";
   std::vector<std::string> binds;
@@ -643,14 +652,14 @@ std::vector<Insight> Database::query_insights(const QueryFilter& f) {
   return scan_insight_rows(st);
 }
 
-void Database::soft_delete_insight(const std::string& id) {
+void SqliteStore::soft_delete_insight(const std::string& id) {
   update_active_insight(db_, "UPDATE insights SET deleted_at = ?, updated_at = ? "
                              "WHERE id = ? AND deleted_at IS NULL",
                         id);
   delete_edges_by_node(id);
 }
 
-void Database::update_entities(const std::string& id, const std::vector<std::string>& entities) {
+void SqliteStore::update_entities(const std::string& id, const std::vector<std::string>& entities) {
   nlohmann::json ej = entities;
   Statement st(db_, "UPDATE insights SET entities = ?, updated_at = ? WHERE id = ?");
   st.bind_text(1, ej.dump());
@@ -660,7 +669,7 @@ void Database::update_entities(const std::string& id, const std::vector<std::str
 }
 
 // Recall side-effect: bump access_count for ranking/EI. Read-only opens skip (no writes to the file).
-void Database::increment_access_count(const std::string& id) {
+void SqliteStore::increment_access_count(const std::string& id) {
   if (readonly_) {
     return;
   }
@@ -671,7 +680,7 @@ void Database::increment_access_count(const std::string& id) {
 }
 
 // Spec parity: access_factor = max(1, log(1+access_count)); edge cap 5; half-life decay on kHalfLifeDays.
-double Database::compute_effective_importance(int importance, int access_count, double days_since_access,
+double Store::compute_effective_importance(int importance, int access_count, double days_since_access,
                                               int edge_count) {
   double base = 0.15;
   switch (importance) {
@@ -704,12 +713,12 @@ double Database::compute_effective_importance(int importance, int access_count, 
   return base * access_factor * decay * edge_factor;
 }
 
-bool Database::is_immune(int importance, int access_count) {
+bool Store::is_immune(int importance, int access_count) {
   return importance >= 4 || access_count >= 3;
 }
 
 // Recompute EI from live importance, access, staleness, and undirected edge degree (source + target counts).
-std::pair<double, bool> Database::refresh_effective_importance(const std::string& id) {
+std::pair<double, bool> SqliteStore::refresh_effective_importance(const std::string& id) {
   Statement st(db_,
                "SELECT importance, access_count, created_at, last_accessed_at FROM insights WHERE id = ? AND "
                "deleted_at IS NULL");
@@ -744,7 +753,7 @@ std::pair<double, bool> Database::refresh_effective_importance(const std::string
 }
 
 // GC preview: recompute EI for all live rows, persist updates in one transaction, return low-EI non-immune rows.
-std::tuple<std::vector<RetentionCandidate>, int> Database::get_retention_candidates(double threshold, int limit) {
+std::tuple<std::vector<RetentionCandidate>, int> SqliteStore::get_retention_candidates(double threshold, int limit) {
   std::map<std::string, int> edge_counts;
   {
     Statement st(db_, "SELECT id, SUM(cnt) FROM ("
@@ -832,7 +841,7 @@ std::tuple<std::vector<RetentionCandidate>, int> Database::get_retention_candida
   return {candidates, total};
 }
 
-int Database::auto_prune(int max_insights, const std::vector<std::string>& exclude_ids) {
+int SqliteStore::auto_prune(int max_insights, const std::vector<std::string>& exclude_ids) {
   int pruned = 0;
   auto run = [&] {
     Statement ct(db_, "SELECT COUNT(*) FROM insights WHERE deleted_at IS NULL");
@@ -896,14 +905,14 @@ int Database::auto_prune(int max_insights, const std::vector<std::string>& exclu
   return pruned;
 }
 
-void Database::boost_retention(const std::string& id) {
+void SqliteStore::boost_retention(const std::string& id) {
   update_active_insight(db_,
                         "UPDATE insights SET access_count = access_count + 3, last_accessed_at = ?, updated_at = ? "
                         "WHERE id = ? AND deleted_at IS NULL",
                         id);
 }
 
-std::vector<Insight> Database::get_recent_insights_in_window(const std::string& exclude_id, double window_hours,
+std::vector<Insight> SqliteStore::get_recent_insights_in_window(const std::string& exclude_id, double window_hours,
                                                              int limit) {
   auto cutoff = time_util::now_utc() - std::chrono::duration_cast<std::chrono::system_clock::duration>(
                                             std::chrono::duration<double>(window_hours * 3600.0));
@@ -917,7 +926,7 @@ std::vector<Insight> Database::get_recent_insights_in_window(const std::string& 
   return scan_insight_rows(st);
 }
 
-std::optional<Insight> Database::get_latest_insight_by_source(const std::string& source, const std::string& exclude_id) {
+std::optional<Insight> SqliteStore::get_latest_insight_by_source(const std::string& source, const std::string& exclude_id) {
   Statement st(db_,
                "SELECT id, content, category, importance, tags, entities, source, access_count, created_at, updated_at, "
                "deleted_at FROM insights WHERE source = ? AND id != ? AND deleted_at IS NULL "
@@ -930,7 +939,7 @@ std::optional<Insight> Database::get_latest_insight_by_source(const std::string&
   return scan_insight_row(st);
 }
 
-std::vector<Insight> Database::get_recent_insights_by_source(const std::string& source, const std::string& exclude_id,
+std::vector<Insight> SqliteStore::get_recent_insights_by_source(const std::string& source, const std::string& exclude_id,
                                                              int limit) {
   Statement st(db_,
                "SELECT id, content, category, importance, tags, entities, source, access_count, created_at, updated_at, "
@@ -942,14 +951,14 @@ std::vector<Insight> Database::get_recent_insights_by_source(const std::string& 
   return scan_insight_rows(st);
 }
 
-std::vector<Insight> Database::get_all_active_insights() {
+std::vector<Insight> SqliteStore::get_all_active_insights() {
   Statement st(db_,
                "SELECT id, content, category, importance, tags, entities, source, access_count, created_at, updated_at, "
                "deleted_at FROM insights WHERE deleted_at IS NULL ORDER BY created_at DESC");
   return scan_insight_rows(st);
 }
 
-InsightStats Database::get_stats() {
+InsightStats SqliteStore::get_stats() {
   InsightStats s;
   Statement t(db_, "SELECT COUNT(*) FROM insights WHERE deleted_at IS NULL");
   t.step();
@@ -981,7 +990,7 @@ InsightStats Database::get_stats() {
   return s;
 }
 
-void Database::update_embedding(const std::string& id, const std::vector<float>& v) {
+void SqliteStore::update_embedding(const std::string& id, const std::vector<float>& v) {
   auto blob = mnemon::serialize_vector(v);
   Statement st(db_, "UPDATE insights SET embedding = ?, updated_at = ? WHERE id = ?");
   st.bind_blob(1, blob.data(), blob.size());
@@ -990,7 +999,7 @@ void Database::update_embedding(const std::string& id, const std::vector<float>&
   st.step();
 }
 
-std::vector<float> Database::get_embedding(const std::string& id) {
+std::vector<float> SqliteStore::get_embedding(const std::string& id) {
   Statement st(db_, "SELECT embedding FROM insights WHERE id = ? AND deleted_at IS NULL");
   st.bind_text(1, id);
   if (!st.step()) {
@@ -1004,7 +1013,7 @@ std::vector<float> Database::get_embedding(const std::string& id) {
   return mnemon::deserialize_vector(p, static_cast<size_t>(n));
 }
 
-std::vector<EmbeddedRow> Database::get_all_embeddings() {
+std::vector<EmbeddedRow> SqliteStore::get_all_embeddings() {
   Statement st(db_, "SELECT id, embedding FROM insights WHERE deleted_at IS NULL AND embedding IS NOT NULL");
   std::vector<EmbeddedRow> out;
   while (st.step()) {
@@ -1022,7 +1031,38 @@ std::vector<EmbeddedRow> Database::get_all_embeddings() {
   return out;
 }
 
-std::tuple<int, int> Database::embedding_stats() {
+// In-process top-k: load all embeddings, cosine, sort, truncate. Same asymptotics
+// as the engine did inline before this seam existed. A pgvector backend overrides
+// this with an indexed nearest-neighbor query (docs/postgres-pgvector.md §6.3).
+std::vector<ScoredId> SqliteStore::nearest_embeddings(std::span<const float> query, int k,
+                                                      std::optional<float> min_cosine) {
+  if (query.empty() || k <= 0) {
+    return {};
+  }
+  auto rows = get_all_embeddings();
+  std::vector<std::span<const float>> vecs;
+  vecs.reserve(rows.size());
+  for (const auto& r : rows) {
+    vecs.emplace_back(r.embedding);
+  }
+  auto sims = mnemon::cosine_similarity_many(query, vecs);
+  float thr = min_cosine.value_or(-1.0F);
+  std::vector<ScoredId> out;
+  out.reserve(rows.size());
+  for (size_t i = 0; i < rows.size(); ++i) {
+    if (sims[i] < thr) {
+      continue;
+    }
+    out.push_back({rows[i].id, sims[i]});
+  }
+  std::sort(out.begin(), out.end(), [](const ScoredId& a, const ScoredId& b) { return a.cosine > b.cosine; });
+  if (static_cast<int>(out.size()) > k) {
+    out.resize(static_cast<size_t>(k));
+  }
+  return out;
+}
+
+std::tuple<int, int> SqliteStore::embedding_stats() {
   Statement t(db_, "SELECT COUNT(*) FROM insights WHERE deleted_at IS NULL");
   t.step();
   int total = t.column_int(0);
@@ -1032,7 +1072,7 @@ std::tuple<int, int> Database::embedding_stats() {
   return {total, emb};
 }
 
-std::vector<Insight> Database::get_insights_without_embedding(int limit) {
+std::vector<Insight> SqliteStore::get_insights_without_embedding(int limit) {
   int lim = limit > 0 ? limit : 100;
   Statement st(db_,
                "SELECT id, content, category, importance, tags, entities, source, access_count, created_at, updated_at, "
@@ -1042,7 +1082,7 @@ std::vector<Insight> Database::get_insights_without_embedding(int limit) {
   return scan_insight_rows(st);
 }
 
-void Database::insert_edge(const Edge& e) {
+void SqliteStore::insert_edge(const Edge& e) {
   nlohmann::json mj(e.metadata);
   Statement st(db_,
                "INSERT OR REPLACE INTO edges (source_id, target_id, edge_type, weight, metadata, created_at) "
@@ -1057,7 +1097,7 @@ void Database::insert_edge(const Edge& e) {
 }
 
 // Incident edges: union of outgoing and incoming (exclude duplicate row when source==target).
-std::vector<Edge> Database::get_edges_by_node(const std::string& node_id) {
+std::vector<Edge> SqliteStore::get_edges_by_node(const std::string& node_id) {
   Statement st(db_,
                "SELECT source_id, target_id, edge_type, weight, metadata, created_at FROM edges WHERE source_id = ? "
                "UNION ALL "
@@ -1069,7 +1109,7 @@ std::vector<Edge> Database::get_edges_by_node(const std::string& node_id) {
   return scan_edge_rows(st);
 }
 
-std::vector<Edge> Database::get_edges_by_node_and_type(const std::string& node_id, EdgeType t) {
+std::vector<Edge> SqliteStore::get_edges_by_node_and_type(const std::string& node_id, EdgeType t) {
   std::string ts = edge_type_str(t);
   Statement st(db_,
                "SELECT source_id, target_id, edge_type, weight, metadata, created_at FROM edges WHERE source_id = ? "
@@ -1085,7 +1125,7 @@ std::vector<Edge> Database::get_edges_by_node_and_type(const std::string& node_i
   return scan_edge_rows(st);
 }
 
-std::vector<Edge> Database::get_edges_by_source_and_type(const std::string& source_id, EdgeType t) {
+std::vector<Edge> SqliteStore::get_edges_by_source_and_type(const std::string& source_id, EdgeType t) {
   Statement st(db_,
                "SELECT source_id, target_id, edge_type, weight, metadata, created_at FROM edges WHERE source_id = ? "
                "AND edge_type = ?");
@@ -1094,7 +1134,7 @@ std::vector<Edge> Database::get_edges_by_source_and_type(const std::string& sour
   return scan_edge_rows(st);
 }
 
-std::vector<std::string> Database::find_insights_with_entity(const std::string& entity, const std::string& exclude_id,
+std::vector<std::string> SqliteStore::find_insights_with_entity(const std::string& entity, const std::string& exclude_id,
                                                              int limit) {
   Statement st(db_,
                "SELECT DISTINCT i.id FROM insights i, json_each(i.entities) je "
@@ -1110,7 +1150,7 @@ std::vector<std::string> Database::find_insights_with_entity(const std::string& 
   return out;
 }
 
-std::unordered_set<std::string> Database::load_known_entities() {
+std::unordered_set<std::string> SqliteStore::load_known_entities() {
   std::unordered_set<std::string> known;
   Statement st(db_,
                "SELECT DISTINCT je.value FROM insights i, json_each(i.entities) je "
@@ -1124,12 +1164,12 @@ std::unordered_set<std::string> Database::load_known_entities() {
   return known;
 }
 
-std::vector<Edge> Database::get_all_edges() {
+std::vector<Edge> SqliteStore::get_all_edges() {
   Statement st(db_, "SELECT source_id, target_id, edge_type, weight, metadata, created_at FROM edges");
   return scan_edge_rows(st);
 }
 
-void Database::delete_edge(const std::string& source_id, const std::string& target_id,
+void SqliteStore::delete_edge(const std::string& source_id, const std::string& target_id,
                            EdgeType edge_type) {
   Statement st(db_, "DELETE FROM edges WHERE source_id = ? AND target_id = ? AND edge_type = ?");
   st.bind_text(1, source_id);
@@ -1138,14 +1178,14 @@ void Database::delete_edge(const std::string& source_id, const std::string& targ
   st.step();
 }
 
-void Database::delete_edges_by_node(const std::string& node_id) {
+void SqliteStore::delete_edges_by_node(const std::string& node_id) {
   Statement st(db_, "DELETE FROM edges WHERE source_id = ? OR target_id = ?");
   st.bind_text(1, node_id);
   st.bind_text(2, node_id);
   st.step();
 }
 
-std::vector<Insight> Database::get_active_insights_by_source_ordered(const std::string& source) {
+std::vector<Insight> SqliteStore::get_active_insights_by_source_ordered(const std::string& source) {
   Statement st(db_,
                "SELECT id, content, category, importance, tags, entities, source, access_count, created_at, updated_at, "
                "deleted_at FROM insights WHERE source = ? AND deleted_at IS NULL "
@@ -1155,7 +1195,7 @@ std::vector<Insight> Database::get_active_insights_by_source_ordered(const std::
 }
 
 // Audit trail; trimmed lazily to kMaxOplogEntries. Read-only and failures are best-effort (stderr only).
-void Database::log_op(const std::string& operation, const std::string& insight_id, const std::string& detail) {
+void SqliteStore::log_op(const std::string& operation, const std::string& insight_id, const std::string& detail) {
   if (readonly_) {
     return;
   }
@@ -1181,7 +1221,7 @@ void Database::log_op(const std::string& operation, const std::string& insight_i
   }
 }
 
-std::vector<OplogEntry> Database::get_oplog(int limit) {
+std::vector<OplogEntry> SqliteStore::get_oplog(int limit) {
   int lim = limit > 0 ? limit : 20;
   Statement st(db_, "SELECT id, operation, insight_id, detail, created_at FROM oplog ORDER BY id DESC LIMIT ?");
   st.bind_int(1, lim);

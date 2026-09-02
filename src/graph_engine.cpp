@@ -1,7 +1,7 @@
 // On `remember`: merge extracted entities, then run all four MAGMA edge builders in deterministic order.
 #include "graph_engine.hpp"
 
-#include "db.hpp"
+#include "store.hpp"
 #include "graph_causal.hpp"
 #include "graph_entity.hpp"
 #include "graph_extract.hpp"
@@ -10,7 +10,7 @@
 
 namespace mnemon::graph_eng {
 
-EdgeStats on_insight_created(Database& db, Insight& insight, EmbedCache* embed_cache,
+EdgeStats on_insight_created(Store& db, Insight& insight, EmbedCache* embed_cache,
                              const std::string& entity_mode, bool temporal_disabled) {
   EdgeStats s;
   auto known = db.load_known_entities();

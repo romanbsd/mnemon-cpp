@@ -1,6 +1,6 @@
 #pragma once
 
-#include "db.hpp"
+#include "store.hpp"
 #include "model.hpp"
 
 #include <unordered_map>
@@ -18,9 +18,9 @@ struct SemanticCandidate {
   bool auto_linked{false};
 };
 
-int create_semantic_edges(Database& db, Insight& insight, EmbedCache* cache);
-std::vector<SemanticCandidate> find_semantic_candidates(Database& db, const Insight& insight, EmbedCache* cache);
+int create_semantic_edges(Store& db, Insight& insight, EmbedCache* cache);
+std::vector<SemanticCandidate> find_semantic_candidates(Store& db, const Insight& insight, EmbedCache* cache);
 
-EmbedCache build_embed_cache(Database& db);
+EmbedCache build_embed_cache(Store& db);
 
 } // namespace mnemon::graph_eng

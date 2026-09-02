@@ -1,13 +1,17 @@
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "../src/db.hpp"
 #include "../src/model.hpp"
 #include "../src/time_util.hpp"
+#include "../src/vector_math.hpp"
 
 #include <sqlite3.h>
 
 #include <filesystem>
+#include <optional>
 #include <random>
+#include <span>
 #include <string>
 
 using namespace mnemon;
@@ -79,9 +83,53 @@ int count_rows(sqlite3* db, const char* sql) {
 
 } // namespace
 
+TEST_CASE("nearest_embeddings matches cosine_similarity_many ordering, threshold and k") {
+  TempDir dir;
+  auto db = SqliteStore::open_readwrite(dir.string());
+
+  // Three unit-ish vectors at increasing angle from the query.
+  std::vector<std::pair<std::string, std::vector<float>>> rows = {
+      {"near", {1.0F, 0.0F, 0.0F}},
+      {"mid", {0.7F, 0.7F, 0.0F}},
+      {"far", {0.0F, 1.0F, 0.0F}},
+  };
+  for (auto& [id, vec] : rows) {
+    db->insert_insight(make_insight(id));
+    db->update_embedding(id, vec);
+  }
+  std::vector<float> query{1.0F, 0.0F, 0.0F};
+
+  auto hits = db->nearest_embeddings(query, 10, std::nullopt);
+  REQUIRE(hits.size() == 3);
+  // Descending cosine == the ordering by angle: near, mid, far.
+  REQUIRE(hits[0].id == "near");
+  REQUIRE(hits[1].id == "mid");
+  REQUIRE(hits[2].id == "far");
+  REQUIRE(hits[0].cosine > hits[1].cosine);
+  REQUIRE(hits[1].cosine > hits[2].cosine);
+
+  // Sign/normalization: identical vector -> cosine ~= 1, orthogonal -> ~= 0.
+  REQUIRE(hits[0].cosine == Catch::Approx(1.0F).margin(1e-5));
+  REQUIRE(hits[2].cosine == Catch::Approx(0.0F).margin(1e-5));
+
+  // Values agree with cosine_similarity directly.
+  REQUIRE(hits[1].cosine ==
+          Catch::Approx(cosine_similarity(query, std::span<const float>(rows[1].second))).margin(1e-5));
+
+  // min_cosine excludes the orthogonal "far" row.
+  auto filtered = db->nearest_embeddings(query, 10, 0.5F);
+  REQUIRE(filtered.size() == 2);
+  REQUIRE(filtered.back().id == "mid");
+
+  // k truncates after ranking.
+  auto topk = db->nearest_embeddings(query, 1, std::nullopt);
+  REQUIRE(topk.size() == 1);
+  REQUIRE(topk[0].id == "near");
+}
+
 TEST_CASE("auto_prune records an oplog entry for every pruned insight") {
   TempDir dir;
-  auto db = Database::open_readwrite(dir.string());
+  auto db = SqliteStore::open_readwrite(dir.string());
 
   for (int i = 0; i < 5; ++i) {
     db->insert_insight(make_insight("audit-" + std::to_string(i)));
@@ -158,9 +206,9 @@ CREATE TABLE oplog (
                "INSERT INTO edges VALUES ('narr-src','vanished','semantic',0.5,'{}','2026-01-01T00:00:00Z')");
   sqlite3_close(raw);
 
-  // Reopening through Database runs migrate(); it must not be blocked by the
+  // Reopening through SqliteStore runs migrate(); it must not be blocked by the
   // orphaned edge, and the FK-masked probe must no longer skip the rebuild.
-  auto db = Database::open_readwrite(dir.string());
+  auto db = SqliteStore::open_readwrite(dir.string());
   db.reset(); // release the connection before inspecting the file directly
 
   sqlite3* verify = nullptr;

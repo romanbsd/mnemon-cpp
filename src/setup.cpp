@@ -1,7 +1,7 @@
 // Interactive and `--json` setup: detect host app, merge hook configs, install/eject embedded assets (go:embed parity).
 #include "setup.hpp"
 
-#include "db.hpp"
+#include "store.hpp"
 #include "embedded_assets.hpp"
 #include "paths.hpp"
 #include "yaml_lite.hpp"
@@ -989,7 +989,7 @@ static void init_default_store(const std::string& data_dir) {
   }
   if (!paths::store_exists(data_dir, "default")) {
     std::string dir = paths::store_dir(data_dir, "default");
-    auto db = Database::open_readwrite(dir);
+    auto db = Store::open_readwrite(dir);
     (void)db;
     std::cout << "  Initialized default store at " << dir << "\n";
   }

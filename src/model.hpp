@@ -44,6 +44,11 @@ struct EmbeddedRow {
   std::vector<float> embedding;
 };
 
+struct ScoredId {
+  std::string id;
+  float cosine{0};
+};
+
 struct RetentionCandidate {
   Insight insight;
   double effective_importance{0};

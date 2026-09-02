@@ -17,7 +17,7 @@ static constexpr double kAutoSemanticThreshold = 0.80;
 static constexpr int kMaxSemanticCandidates = 5;
 static constexpr int kMaxAutoSemanticEdges = 3;
 
-EmbedCache build_embed_cache(Database& db) {
+EmbedCache build_embed_cache(Store& db) {
   EmbedCache c;
   for (auto& row : db.get_all_embeddings()) {
     if (!row.embedding.empty()) {
@@ -28,7 +28,7 @@ EmbedCache build_embed_cache(Database& db) {
   return c;
 }
 
-int create_semantic_edges(Database& db, Insight& insight, EmbedCache* cache) {
+int create_semantic_edges(Store& db, Insight& insight, EmbedCache* cache) {
   EmbedCache owned;
   if (!cache) {
     owned = build_embed_cache(db);
@@ -96,7 +96,7 @@ int create_semantic_edges(Database& db, Insight& insight, EmbedCache* cache) {
   return count;
 }
 
-static std::vector<SemanticCandidate> find_by_embedding(Database& db, const Insight& insight, EmbedCache& cache) {
+static std::vector<SemanticCandidate> find_by_embedding(Store& db, const Insight& insight, EmbedCache& cache) {
   auto it = cache.find(insight.id);
   if (it == cache.end() || it->second.empty()) {
     return {};
@@ -145,7 +145,7 @@ static std::vector<SemanticCandidate> find_by_embedding(Database& db, const Insi
   return out;
 }
 
-static std::vector<SemanticCandidate> find_by_token_overlap(Database& db, const Insight& insight) {
+static std::vector<SemanticCandidate> find_by_token_overlap(Store& db, const Insight& insight) {
   auto all = db.get_all_active_insights();
   const auto insight_tokens = search_engine::tokenize(insight.content);
   struct Sc {
@@ -174,7 +174,7 @@ static std::vector<SemanticCandidate> find_by_token_overlap(Database& db, const 
   return out;
 }
 
-std::vector<SemanticCandidate> find_semantic_candidates(Database& db, const Insight& insight, EmbedCache* cache) {
+std::vector<SemanticCandidate> find_semantic_candidates(Store& db, const Insight& insight, EmbedCache* cache) {
   EmbedCache owned;
   if (!cache) {
     owned = build_embed_cache(db);

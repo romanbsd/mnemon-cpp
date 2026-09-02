@@ -10,7 +10,7 @@
 
 namespace mnemon {
 
-class Database;
+class Store;
 
 namespace search_engine {
 
@@ -42,7 +42,7 @@ struct RecallResponse {
   RecallMeta meta;
 };
 
-RecallResponse intent_aware_recall(Database& db, std::string_view query, const std::vector<float>& query_vec,
+RecallResponse intent_aware_recall(Store& db, std::string_view query, const std::vector<float>& query_vec,
                                    const std::vector<std::string>& query_entities, int limit,
                                    std::optional<Intent> intent_override);
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "db.hpp"
+#include "store.hpp"
 #include "model.hpp"
 
 #include <optional>
@@ -20,6 +20,6 @@ struct BFSOptions {
   std::optional<EdgeType> edge_filter;
 };
 
-std::vector<BFSNode> bfs(Database& db, const std::string& start_id, const BFSOptions& opts);
+std::vector<BFSNode> bfs(Store& db, const std::string& start_id, const BFSOptions& opts);
 
 } // namespace mnemon::graph_eng

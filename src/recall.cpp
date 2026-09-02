@@ -2,7 +2,7 @@
 // Intent tweaks traversal width/depth and edge weights; "why" reorders by causal DAG (Kahn + score tie-break).
 #include "recall.hpp"
 
-#include "db.hpp"
+#include "store.hpp"
 #include "intent.hpp"
 #include "keyword.hpp"
 #include "tokenize.hpp"
@@ -119,7 +119,7 @@ std::vector<VecHit> vector_search_from_cache(const std::unordered_map<std::strin
 }
 
 // Layered beam: expand neighbors by structural edge weight + optional cosine to query; keep top `beam` per depth.
-void beam_search_from_anchor(Database& db, const std::string& start_id, double start_score,
+void beam_search_from_anchor(Store& db, const std::string& start_id, double start_score,
                              std::span<const float> query_vec, const IntentWeights& weights, const Trav& params,
                              std::unordered_map<std::string, double>& score_map,
                              std::unordered_map<std::string, std::string>& via_map,
@@ -200,7 +200,7 @@ void beam_search_from_anchor(Database& db, const std::string& start_id, double s
 }
 
 // Order results along causal edges among the candidate set; max-heap tie-break preserves high rerank scores.
-std::vector<RecallResult> causal_topological_sort(Database& db, const std::vector<RecallResult>& results) {
+std::vector<RecallResult> causal_topological_sort(Store& db, const std::vector<RecallResult>& results) {
   if (results.size() <= 1) {
     return results;
   }
@@ -260,7 +260,7 @@ std::vector<RecallResult> causal_topological_sort(Database& db, const std::vecto
 } // namespace
 
 // Fused anchors (RRF + L2-normalize) seed the graph; each anchor runs beam_search. Rerank mixes kw/entity/sim/graph.
-RecallResponse intent_aware_recall(Database& db, std::string_view query, const std::vector<float>& query_vec,
+RecallResponse intent_aware_recall(Store& db, std::string_view query, const std::vector<float>& query_vec,
                                  const std::vector<std::string>& query_entities, int limit,
                                  std::optional<Intent> intent_override) {
   Intent intent = Intent::General;

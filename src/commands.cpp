@@ -1,7 +1,7 @@
 // Cobra/CLI11 wiring: global flags, JSON output parity with Go mnemon, command handlers.
 #include "commands.hpp"
 
-#include "db.hpp"
+#include "store.hpp"
 #include "diff.hpp"
 #include "graph_bfs.hpp"
 #include "graph_causal.hpp"
@@ -213,19 +213,19 @@ static void emit_remember_event(const std::string& insight_id, const std::string
   try { emit_harness_event(opts); } catch (...) {}
 }
 
-static std::unique_ptr<mnemon::Database> open_db() {
+static std::unique_ptr<mnemon::Store> open_db() {
   std::string name = resolve_store();
   if (!mnemon::paths::valid_store_name(name)) {
     throw std::runtime_error("invalid store name \"" + name + "\"");
   }
   std::string dir = mnemon::paths::store_dir(g_data_dir, name);
   if (g_readonly) {
-    return mnemon::Database::open_readonly(dir);
+    return mnemon::Store::open_readonly(dir);
   }
   if (!mnemon::paths::migrate_if_needed(g_data_dir, false)) {
     throw std::runtime_error("migrate failed");
   }
-  return mnemon::Database::open_readwrite(dir);
+  return mnemon::Store::open_readwrite(dir);
 }
 
 static void require_positive_limit(const char* flag, int value) {
@@ -293,7 +293,7 @@ make_diff_options(const mnemon::graph_eng::EmbedCache& embed_cache, const std::v
   return options;
 }
 
-static void soft_delete_replaced(mnemon::Database& db, mnemon::graph_eng::EmbedCache& embed_cache,
+static void soft_delete_replaced(mnemon::Store& db, mnemon::graph_eng::EmbedCache& embed_cache,
                                  const std::string& replaced_id, const std::string& replacement_id,
                                  const char* operation) {
   try {
@@ -1069,7 +1069,7 @@ int run_mnemon(int argc, char** argv) {
       throw CLI::ValidationError("store \"" + st_name + "\" already exists");
     }
     std::string dir = mnemon::paths::store_dir(g_data_dir, st_name);
-    auto db = mnemon::Database::open_readwrite(dir);
+    auto db = mnemon::Store::open_readwrite(dir);
     db.reset();
     std::cout << "Created store \"" << st_name << "\"\n";
   });

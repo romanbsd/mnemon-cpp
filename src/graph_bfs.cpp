@@ -7,7 +7,7 @@
 
 namespace mnemon::graph_eng {
 
-std::vector<BFSNode> bfs(Database& db, const std::string& start_id, const BFSOptions& opts) {
+std::vector<BFSNode> bfs(Store& db, const std::string& start_id, const BFSOptions& opts) {
   auto all_insights = db.get_all_active_insights();
   std::unordered_map<std::string, const Insight*> imap;
   imap.reserve(all_insights.size());

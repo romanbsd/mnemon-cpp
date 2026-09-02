@@ -75,7 +75,7 @@ static std::string find_causal_signal(std::string_view text) {
   return "";
 }
 
-int create_causal_edges(Database& db, Insight& insight) {
+int create_causal_edges(Store& db, Insight& insight) {
   auto recent = db.get_recent_insights_by_source(insight.source, insight.id, kCausalLookback);
   if (recent.empty()) {
     return 0;
@@ -120,7 +120,7 @@ int create_causal_edges(Database& db, Insight& insight) {
   return count;
 }
 
-std::vector<CausalCandidate> find_causal_candidates(Database& db, const Insight& insight) {
+std::vector<CausalCandidate> find_causal_candidates(Store& db, const Insight& insight) {
   auto nodes = bfs(db, insight.id, BFSOptions{2, kMaxCausalCandidates, std::nullopt});
   std::vector<CausalCandidate> out;
   for (const auto& n : nodes) {
