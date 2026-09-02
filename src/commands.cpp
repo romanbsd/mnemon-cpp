@@ -339,6 +339,85 @@ static std::string confidence_label(double score) {
   return "high";
 }
 
+// --- token-friendly "brief" discovery projection (recall/search) ---
+
+static constexpr int kDefaultBriefExcerptChars = 240;
+
+static void print_json_compact(const nlohmann::json& j) { std::cout << j.dump() << '\n'; }
+
+// Count Unicode codepoints in a UTF-8 string.
+static size_t utf8_len(const std::string& s) {
+  size_t n = 0;
+  for (size_t i = 0; i < s.size();) {
+    unsigned char c = static_cast<unsigned char>(s[i]);
+    size_t adv = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 1;
+    i += adv;
+    ++n;
+  }
+  return n;
+}
+
+// Byte-prefix covering the first `count` codepoints (never splits a codepoint).
+static std::string utf8_prefix(const std::string& s, size_t count) {
+  size_t i = 0, n = 0;
+  while (i < s.size() && n < count) {
+    unsigned char c = static_cast<unsigned char>(s[i]);
+    size_t adv = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 1;
+    i += adv;
+    ++n;
+  }
+  return s.substr(0, i);
+}
+
+// Flatten runs of whitespace to single spaces so one memory cannot turn a
+// discovery row into a large multi-line block (mirrors strings.Fields join).
+static std::string flatten_whitespace(const std::string& s) {
+  std::istringstream iss(s);
+  std::string word, out;
+  bool first = true;
+  while (iss >> word) {
+    if (!first) {
+      out += ' ';
+    }
+    out += word;
+    first = false;
+  }
+  return out;
+}
+
+static std::string make_brief_excerpt(const std::string& content_in, int max_chars) {
+  std::string content = flatten_whitespace(content_in);
+  if (static_cast<int>(utf8_len(content)) <= max_chars) {
+    return content;
+  }
+  if (max_chars == 1) {
+    return "\xE2\x80\xA6"; // U+2026 …
+  }
+  std::string prefix = utf8_prefix(content, static_cast<size_t>(max_chars - 1));
+  while (!prefix.empty() && std::isspace(static_cast<unsigned char>(prefix.back()))) {
+    prefix.pop_back();
+  }
+  return prefix + "\xE2\x80\xA6";
+}
+
+static void validate_brief_excerpt_chars(bool enabled, int limit) {
+  if (enabled && limit <= 0) {
+    throw CLI::ValidationError("--excerpt-chars must be greater than 0");
+  }
+}
+
+static nlohmann::json make_brief_response(const nlohmann::json& results, const std::string& hint) {
+  nlohmann::json resp;
+  resp["results"] = results.is_array() ? results : nlohmann::json::array();
+  if (!hint.empty()) {
+    resp["hint"] = hint;
+  }
+  if (!resp["results"].empty()) {
+    resp["detail_command"] = "mnemon show <id>";
+  }
+  return resp;
+}
+
 static nlohmann::json compact_recall_result_json(const mnemon::search_engine::RecallResult& r) {
   double rounded = round_score(r.score);
   nlohmann::json j;
@@ -601,6 +680,8 @@ int run_mnemon(int argc, char** argv) {
   bool rec_basic = false;
   bool rec_smart = false;
   bool rec_verbose = false;
+  bool rec_brief = false;
+  int rec_excerpt = kDefaultBriefExcerptChars;
   std::string rec_intent;
   recall->add_option("query", rec_parts)->required()->expected(-1);
   recall->add_option("--cat", rec_cat);
@@ -610,8 +691,15 @@ int run_mnemon(int argc, char** argv) {
   recall->add_flag("--smart", rec_smart)->group("");
   recall->add_option("--intent", rec_intent);
   recall->add_flag("--verbose", rec_verbose, "output full recall response (signals, meta, timestamps)");
+  recall->add_flag("--brief", rec_brief,
+                   "output short excerpts for discovery; use 'mnemon show <id>' for full content");
+  recall->add_option("--excerpt-chars", rec_excerpt, "maximum characters per --brief excerpt");
   recall->callback([&] {
     require_positive_limit("--limit", rec_limit);
+    validate_brief_excerpt_chars(rec_brief, rec_excerpt);
+    if (rec_brief && rec_verbose) {
+      throw CLI::ValidationError("--brief and --verbose cannot be used together");
+    }
     std::string rec_query;
     for (size_t i = 0; i < rec_parts.size(); ++i) {
       if (i) {
@@ -631,6 +719,20 @@ int run_mnemon(int argc, char** argv) {
         db->increment_access_count(r.id);
       }
       db->log_op("recall:basic", "", "q=" + rec_query + " hits=" + std::to_string(results.size()));
+      if (rec_brief) {
+        nlohmann::json brief = nlohmann::json::array();
+        for (const auto& i : results) {
+          nlohmann::json item;
+          item["id"] = i.id;
+          item["excerpt"] = make_brief_excerpt(i.content, rec_excerpt);
+          if (!i.category.empty()) {
+            item["category"] = i.category;
+          }
+          brief.push_back(item);
+        }
+        print_json_compact(make_brief_response(brief, ""));
+        return;
+      }
       nlohmann::json arr = nlohmann::json::array();
       for (const auto& i : results) {
         arr.push_back(mnemon::insight_to_json(i));
@@ -682,6 +784,21 @@ int run_mnemon(int argc, char** argv) {
       }
       out["meta"] = meta;
       print_json(out);
+    } else if (rec_brief) {
+      nlohmann::json brief = nlohmann::json::array();
+      for (const auto& r : resp.results) {
+        double score = round_score(r.score);
+        nlohmann::json item;
+        item["id"] = r.insight.id;
+        item["excerpt"] = make_brief_excerpt(r.insight.content, rec_excerpt);
+        if (!r.insight.category.empty()) {
+          item["category"] = r.insight.category;
+        }
+        item["score"] = score;
+        item["confidence"] = confidence_label(score);
+        brief.push_back(item);
+      }
+      print_json_compact(make_brief_response(brief, resp.meta.hint));
     } else {
       nlohmann::json out;
       nlohmann::json rj = nlohmann::json::array();
@@ -700,10 +817,16 @@ int run_mnemon(int argc, char** argv) {
   auto* search = app.add_subcommand("search", "Token search");
   std::vector<std::string> sea_parts;
   int sea_limit = 10;
+  bool sea_brief = false;
+  int sea_excerpt = kDefaultBriefExcerptChars;
   search->add_option("query", sea_parts)->required()->expected(-1);
   search->add_option("--limit", sea_limit);
+  search->add_flag("--brief", sea_brief,
+                   "output short excerpts for discovery; use 'mnemon show <id>' for full content");
+  search->add_option("--excerpt-chars", sea_excerpt, "maximum characters per --brief excerpt");
   search->callback([&] {
     require_positive_limit("--limit", sea_limit);
+    validate_brief_excerpt_chars(sea_brief, sea_excerpt);
     std::string sea_q;
     for (size_t i = 0; i < sea_parts.size(); ++i) {
       if (i) {
@@ -718,6 +841,21 @@ int run_mnemon(int argc, char** argv) {
       db->increment_access_count(s.insight.id);
     }
     db->log_op("search", "", "q=" + sea_q + " hits=" + std::to_string(scored.size()));
+    if (sea_brief) {
+      nlohmann::json brief = nlohmann::json::array();
+      for (const auto& s : scored) {
+        nlohmann::json item;
+        item["id"] = s.insight.id;
+        item["excerpt"] = make_brief_excerpt(s.insight.content, sea_excerpt);
+        if (!s.insight.category.empty()) {
+          item["category"] = s.insight.category;
+        }
+        item["score"] = round_score(s.score);
+        brief.push_back(item);
+      }
+      print_json_compact(make_brief_response(brief, ""));
+      return;
+    }
     nlohmann::json arr = nlohmann::json::array();
     for (const auto& s : scored) {
       arr.push_back({{"id", s.insight.id},
@@ -728,6 +866,21 @@ int run_mnemon(int argc, char** argv) {
                      {"score", s.score}});
     }
     print_json(arr);
+  });
+
+  // --- show ---
+  auto* show = app.add_subcommand("show", "Show one full insight by ID");
+  std::string show_id;
+  show->add_option("id", show_id)->required();
+  show->callback([&] {
+    auto db = open_db();
+    auto ins = db->get_insight_by_id(show_id);
+    if (!ins) {
+      throw std::runtime_error("insight " + show_id + " not found");
+    }
+    db->increment_access_count(ins->id);
+    db->log_op("show", ins->id, "full insight");
+    print_json(mnemon::insight_to_json(*ins));
   });
 
   // --- link ---
