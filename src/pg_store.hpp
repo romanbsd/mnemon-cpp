@@ -8,10 +8,10 @@
 //     the exact RFC 3339 UTC string the model already carries and reproduces
 //     SQLite's lexicographic created_at comparisons byte-for-byte, with zero
 //     marshalling. Native types buy nothing at Phase 2 scale.
-//   - embedding is BYTEA holding the same little-endian float32 blob SQLite
-//     writes (serialize_vector), so Phase 2 needs no pgvector extension and is
-//     dimension-safe. The pgvector `vector` column + HNSW index arrive in
-//     Phase 3, which also does the one-time bytea -> vector copy.
+//   - embedding is a pgvector `vector` column (Phase 3). It starts unspecified-
+//     dimension; once the store crosses the index threshold the column is pinned
+//     to vector(N) and an HNSW index is built. Recall over-fetches via `<=>` and
+//     re-ranks exactly in C++ (see nearest_embeddings).
 // tags/entities/metadata ARE JSONB, per the proposal, to get the entity GIN
 // index and server-side jsonb_array_elements.
 #include "store.hpp"

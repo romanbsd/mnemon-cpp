@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -62,47 +63,43 @@ std::vector<std::string> parse_json_str_array(const std::string& encoded) {
   return values;
 }
 
-const char* kHex = "0123456789abcdef";
-
-std::string bytea_hex_literal(const std::vector<uint8_t>& bytes) {
-  std::string out = "\\x";
-  out.reserve(2 + bytes.size() * 2);
-  for (uint8_t b : bytes) {
-    out += kHex[b >> 4];
-    out += kHex[b & 0x0F];
+// pgvector text literal: "[v0,v1,...]". %.9g round-trips a float32 exactly.
+std::string vector_literal(std::span<const float> v) {
+  std::string out = "[";
+  char buf[24];
+  for (size_t i = 0; i < v.size(); ++i) {
+    if (i) {
+      out += ',';
+    }
+    std::snprintf(buf, sizeof buf, "%.9g", static_cast<double>(v[i]));
+    out += buf;
   }
+  out += "]";
   return out;
 }
 
-int hex_nibble(char c) {
-  if (c >= '0' && c <= '9') {
-    return c - '0';
+// Parse pgvector's text output "[v0,v1,...]" back into floats.
+std::vector<float> parse_vector_text(const std::string& s) {
+  std::vector<float> out;
+  size_t i = 0;
+  while (i < s.size() && s[i] != '[') {
+    ++i;
   }
-  if (c >= 'a' && c <= 'f') {
-    return c - 'a' + 10;
+  if (i < s.size()) {
+    ++i; // past '['
   }
-  if (c >= 'A' && c <= 'F') {
-    return c - 'A' + 10;
-  }
-  return -1;
-}
-
-// Decode Postgres bytea hex output ("\x...") into the raw float32 blob.
-std::vector<uint8_t> decode_bytea_hex(const char* s) {
-  std::vector<uint8_t> out;
-  if (!s || s[0] != '\\' || s[1] != 'x') {
-    return out;
-  }
-  const char* p = s + 2;
-  out.reserve(std::char_traits<char>::length(p) / 2);
-  while (p[0] && p[1]) {
-    int hi = hex_nibble(p[0]);
-    int lo = hex_nibble(p[1]);
-    if (hi < 0 || lo < 0) {
+  while (i < s.size() && s[i] != ']') {
+    while (i < s.size() && (s[i] == ' ' || s[i] == ',')) {
+      ++i;
+    }
+    if (i >= s.size() || s[i] == ']') {
       break;
     }
-    out.push_back(static_cast<uint8_t>((hi << 4) | lo));
-    p += 2;
+    size_t start = i;
+    while (i < s.size() && s[i] != ',' && s[i] != ']') {
+      ++i;
+    }
+    out.push_back(std::strtof(s.c_str() + start, nullptr));
   }
   return out;
 }
@@ -486,32 +483,30 @@ public:
   }
 
   void update_embedding(const std::string& id, const std::vector<float>& v) override {
-    auto blob = mnemon::serialize_vector(v);
-    exec("UPDATE insights SET embedding = $1::bytea, updated_at = $2 WHERE id = $3",
-         {bytea_hex_literal(blob), now_str(), id});
+    exec("UPDATE insights SET embedding = $1::vector, updated_at = $2 WHERE id = $3",
+         {vector_literal(v), now_str(), id});
+    maybe_build_index(static_cast<int>(v.size()));
   }
 
   std::vector<float> get_embedding(const std::string& id) override {
-    auto q = exec("SELECT embedding FROM insights WHERE id = $1 AND deleted_at IS NULL", {id});
+    auto q = exec("SELECT embedding::text FROM insights WHERE id = $1 AND deleted_at IS NULL", {id});
     if (q.rows() == 0) {
       throw std::runtime_error("no embedding");
     }
     if (q.is_null(0, 0)) {
       return {};
     }
-    auto bytes = decode_bytea_hex(q.str(0, 0).c_str());
-    return mnemon::deserialize_vector(bytes.data(), bytes.size());
+    return parse_vector_text(q.str(0, 0));
   }
 
   std::vector<EmbeddedRow> get_all_embeddings() override {
-    auto q = exec("SELECT id, embedding FROM insights WHERE deleted_at IS NULL AND embedding IS NOT NULL", {});
+    auto q = exec("SELECT id, embedding::text FROM insights WHERE deleted_at IS NULL AND embedding IS NOT NULL", {});
     std::vector<EmbeddedRow> out;
     for (int r = 0; r < q.rows(); ++r) {
       EmbeddedRow row;
       row.id = q.str(r, 0);
       if (!q.is_null(r, 1)) {
-        auto bytes = decode_bytea_hex(q.str(r, 1).c_str());
-        row.embedding = mnemon::deserialize_vector(bytes.data(), bytes.size());
+        row.embedding = parse_vector_text(q.str(r, 1));
       }
       if (!row.embedding.empty()) {
         out.push_back(std::move(row));
@@ -520,35 +515,43 @@ public:
     return out;
   }
 
-  // Phase 2: sequential scan scored in-process, identical ranking to SqliteStore
-  // (and dimension-safe: cosine_similarity_many returns 0 on a length mismatch).
-  // Phase 3 replaces this with a pgvector `<=>` indexed query.
+  // Exact over-fetch + rerank (docs §6.3, confirmed default): the HNSW index (or a
+  // seq scan below the index threshold) picks k*4 nearest candidates, then we
+  // re-score those with our own cosine_similarity for SQLite-identical ranking.
+  // Any pgvector error (e.g. a stray mismatched-dimension vector) falls back to a
+  // full dimension-safe C++ scan.
   std::vector<ScoredId> nearest_embeddings(std::span<const float> query, int k,
                                            std::optional<float> min_cosine) override {
     if (query.empty() || k <= 0) {
       return {};
     }
-    auto rows = get_all_embeddings();
-    std::vector<std::span<const float>> vecs;
-    vecs.reserve(rows.size());
-    for (const auto& r : rows) {
-      vecs.emplace_back(r.embedding);
-    }
-    auto sims = mnemon::cosine_similarity_many(query, vecs);
-    float thr = min_cosine.value_or(-1.0F);
-    std::vector<ScoredId> out;
-    out.reserve(rows.size());
-    for (size_t i = 0; i < rows.size(); ++i) {
-      if (sims[i] < thr) {
-        continue;
+    int overfetch = k * 4;
+    try {
+      auto q = exec("SELECT id, embedding::text FROM insights "
+                    "WHERE deleted_at IS NULL AND embedding IS NOT NULL "
+                    "ORDER BY embedding <=> $1::vector LIMIT $2",
+                    {vector_literal(query), std::to_string(overfetch)});
+      std::vector<std::string> ids;
+      std::vector<std::vector<float>> embs;
+      ids.reserve(q.rows());
+      embs.reserve(q.rows());
+      for (int r = 0; r < q.rows(); ++r) {
+        ids.push_back(q.str(r, 0));
+        embs.push_back(parse_vector_text(q.str(r, 1)));
       }
-      out.push_back({rows[i].id, sims[i]});
+      return rerank(query, ids, embs, k, min_cosine);
+    } catch (const std::exception&) {
+      auto rows = get_all_embeddings();
+      std::vector<std::string> ids;
+      std::vector<std::vector<float>> embs;
+      ids.reserve(rows.size());
+      embs.reserve(rows.size());
+      for (auto& r : rows) {
+        ids.push_back(std::move(r.id));
+        embs.push_back(std::move(r.embedding));
+      }
+      return rerank(query, ids, embs, k, min_cosine);
     }
-    std::sort(out.begin(), out.end(), [](const ScoredId& a, const ScoredId& b) { return a.cosine > b.cosine; });
-    if (static_cast<int>(out.size()) > k) {
-      out.resize(static_cast<size_t>(k));
-    }
-    return out;
   }
 
   std::tuple<int, int> embedding_stats() override {
@@ -751,6 +754,73 @@ private:
     }
   }
 
+  // Exact top-k over a candidate set using our own cosine, matching SqliteStore.
+  static std::vector<ScoredId> rerank(std::span<const float> query, const std::vector<std::string>& ids,
+                                      const std::vector<std::vector<float>>& embs, int k,
+                                      std::optional<float> min_cosine) {
+    std::vector<std::span<const float>> vecs;
+    vecs.reserve(embs.size());
+    for (const auto& e : embs) {
+      vecs.emplace_back(e);
+    }
+    auto sims = mnemon::cosine_similarity_many(query, vecs);
+    float thr = min_cosine.value_or(-1.0F);
+    std::vector<ScoredId> out;
+    out.reserve(ids.size());
+    for (size_t i = 0; i < ids.size(); ++i) {
+      if (sims[i] < thr) {
+        continue;
+      }
+      out.push_back({ids[i], sims[i]});
+    }
+    std::sort(out.begin(), out.end(), [](const ScoredId& a, const ScoredId& b) { return a.cosine > b.cosine; });
+    if (static_cast<int>(out.size()) > k) {
+      out.resize(static_cast<size_t>(k));
+    }
+    return out;
+  }
+
+  static int index_threshold() {
+    if (const char* e = std::getenv("MNEMON_PG_INDEX_THRESHOLD"); e && *e) {
+      int v = std::atoi(e);
+      if (v > 0) {
+        return v;
+      }
+    }
+    return 1000;
+  }
+
+  // pgvector stores the pinned dimension directly in atttypmod (-1 = unspecified).
+  int column_dim() {
+    auto q = exec("SELECT atttypmod FROM pg_attribute WHERE attrelid = 'insights'::regclass AND attname = 'embedding'",
+                  {});
+    return q.rows() == 0 ? -1 : q.as_int(0, 0);
+  }
+
+  // Once enough rows exist, pin the column to vector(dim) and build the HNSW index
+  // (docs §6.4). Probed once per process; the ALTER rewrites the table, so it is
+  // deliberately lazy and one-time. Below the threshold the seq-scan <=> stays exact.
+  void maybe_build_index(int dim) {
+    if (readonly_ || dim <= 0 || index_checked_) {
+      return;
+    }
+    index_checked_ = true;
+    int n = exec("SELECT COUNT(*) FROM insights WHERE deleted_at IS NULL AND embedding IS NOT NULL", {}).as_int(0, 0);
+    if (n < index_threshold() || column_dim() != -1) {
+      return;
+    }
+    try {
+      std::string d = std::to_string(dim);
+      exec_simple(("ALTER TABLE insights ALTER COLUMN embedding TYPE vector(" + d + ") USING embedding::vector(" + d +
+                   ")")
+                      .c_str());
+      exec_simple("CREATE INDEX IF NOT EXISTS idx_insights_embedding "
+                  "ON insights USING hnsw (embedding vector_cosine_ops)");
+    } catch (const std::exception& ex) {
+      std::cerr << "warning: pgvector index build skipped: " << ex.what() << "\n";
+    }
+  }
+
   PgResult exec(const std::string& sql, const Params& params) {
     std::vector<const char*> vals;
     vals.reserve(params.size());
@@ -783,10 +853,12 @@ private:
   std::string path_;
   bool readonly_{false};
   int tx_depth_{0};
+  bool index_checked_{false};
 
 public:
   void migrate() {
     exec_simple(R"SQL(
+CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS insights (
     seq                   BIGSERIAL,
     id                    TEXT PRIMARY KEY,
@@ -801,7 +873,7 @@ CREATE TABLE IF NOT EXISTS insights (
     updated_at            TEXT NOT NULL,
     deleted_at            TEXT,
     last_accessed_at      TEXT,
-    embedding             BYTEA,
+    embedding             vector,
     effective_importance  DOUBLE PRECISION NOT NULL DEFAULT 0.5
 );
 CREATE TABLE IF NOT EXISTS edges (
