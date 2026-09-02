@@ -338,7 +338,7 @@ export async function runTypescript(
     const neighbors = await mnemon.related(row.id, { maxDepth: 2, limit: 100 });
     related[key] = neighbors
       .map((insight) => idToKey.get(insight.id) ?? keyOf(insight.content, byContent))
-      .filter((k): k is string => k !== undefined)
+      .filter((k): k is string => k !== undefined && k !== key)
       .sort();
   }
 

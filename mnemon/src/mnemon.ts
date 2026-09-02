@@ -104,7 +104,10 @@ class MnemonService implements Mnemon {
 
   async initialize(): Promise<void> {
     if (!this.initPromise) {
-      this.initPromise = this.doInitialize();
+      this.initPromise = this.doInitialize().catch((error: unknown) => {
+        this.initPromise = undefined;
+        throw error;
+      });
     }
     return this.initPromise;
   }
@@ -369,7 +372,7 @@ class MnemonService implements Mnemon {
           query_hash: createHash("sha256").update(validated.query, "utf8").digest("hex"),
           hit_count: returnedIds.length,
           intent,
-          algorithm_version: "mnemon-ts-v1",
+          algorithm_version: ALGORITHM_VERSION,
         },
         now,
       );

@@ -15,6 +15,7 @@ export function wrapDatabaseError(error: unknown): MnemonDatabaseError {
 
 export async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
+  let destroyClient = false;
   try {
     await client.query("BEGIN");
     const result = await fn(client);
@@ -24,8 +25,8 @@ export async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) =>
     try {
       await client.query("ROLLBACK");
     } catch (rollbackError) {
+      destroyClient = true;
       const wrapped = wrapDatabaseError(error);
-      wrapped.cause = error;
       (wrapped as MnemonDatabaseError & { rollbackError?: unknown }).rollbackError = rollbackError;
       throw wrapped;
     }
@@ -34,6 +35,6 @@ export async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) =>
     }
     throw error instanceof MnemonDatabaseError ? error : wrapDatabaseError(error);
   } finally {
-    client.release();
+    client.release(destroyClient);
   }
 }

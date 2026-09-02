@@ -6,6 +6,7 @@ import {
   fuseRrf,
   minMaxNormalize,
   normalizeEliteGraph,
+  transitionScore,
   traverseGraph,
 } from "../../src/engine/recall.js";
 import { effectiveImportance } from "../../src/engine/retention.js";
@@ -43,6 +44,22 @@ describe("beam traversal", () => {
     expect(state.scores.get("b")!).toBeGreaterThan(state.scores.get("c")!);
     expect(state.via.get("b")).toBe("causal");
     expect(state.traversed).toBeGreaterThan(1);
+  });
+
+  it("replaces a same-depth queued score when a later path is better", () => {
+    const state = traverseGraph({
+      anchors: [{ id: "a", score: 1, matchedVia: "keyword" }],
+      edges: [
+        { sourceId: "a", targetId: "d", edgeType: "temporal", weight: 1 },
+        { sourceId: "a", targetId: "d", edgeType: "causal", weight: 1 },
+        { sourceId: "d", targetId: "e", edgeType: "causal", weight: 1 },
+      ],
+      intent: "WHY",
+      maxCandidates: 500,
+    });
+    const causalStep = transitionScore(0.7, 0);
+    expect(state.via.get("d")).toBe("causal");
+    expect(state.scores.get("e")).toBeCloseTo(1 + causalStep + causalStep);
   });
 
   it("runs a beam from each anchor and adds cosine to the transition", () => {

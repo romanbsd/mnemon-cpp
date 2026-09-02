@@ -14,9 +14,9 @@ describe.skipIf(!available)("postgres integration", () => {
   const clock = new FakeClock(new Date("2024-06-01T00:00:00Z"));
 
   it("runs migrations idempotently", async () => {
-    await withMnemon({ clock }, async (mnemon) => {
-      await mnemon.initialize();
-      await mnemon.initialize();
+    await withMnemon({ clock }, async (_mnemon, { pool, schema }) => {
+      const second = createMnemon({ pool, schema, clock });
+      await second.initialize();
     });
   });
 
@@ -60,6 +60,21 @@ describe.skipIf(!available)("postgres integration", () => {
       const recalled = await mnemon.recall({ query: "tell me about TypeScript", intent: "ENTITY" });
       const hit = recalled.results.find((r) => r.insight.id === added.insight.id);
       expect(hit?.signals.entity).toBeGreaterThan(0);
+    });
+  });
+
+  it("creates entity edges when persisted and new values differ only by case", async () => {
+    await withMnemon({ clock }, async (mnemon) => {
+      const first = await mnemon.remember({
+        content: "Prefers the language for services",
+        entities: ["TypeScript"],
+      });
+      const second = await mnemon.remember({
+        content: "Talk about the same language later",
+        entities: ["typescript"],
+      });
+      const related = await mnemon.related(first.insight.id, { edgeType: "entity" });
+      expect(related.some((r) => r.id === second.insight.id)).toBe(true);
     });
   });
 

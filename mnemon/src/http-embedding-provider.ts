@@ -33,20 +33,32 @@ function trimSlash(url: string): string {
   return url.replace(/\/$/u, "");
 }
 
+function asFiniteVector(vector: unknown): number[] | undefined {
+  if (!Array.isArray(vector) || vector.length === 0) {
+    return undefined;
+  }
+  const out: number[] = [];
+  for (const n of vector) {
+    if (typeof n !== "number" || !Number.isFinite(n)) {
+      return undefined;
+    }
+    out.push(n);
+  }
+  return out;
+}
+
 function openaiVector(payload: unknown): number[] | undefined {
   if (typeof payload !== "object" || payload === null || !("data" in payload)) {
     return undefined;
   }
-  const vector = (payload as { data?: Array<{ embedding?: number[] }> }).data?.[0]?.embedding;
-  return vector && vector.length > 0 ? vector : undefined;
+  return asFiniteVector((payload as { data?: Array<{ embedding?: unknown }> }).data?.[0]?.embedding);
 }
 
 function ollamaVector(payload: unknown): number[] | undefined {
   if (typeof payload !== "object" || payload === null || !("embeddings" in payload)) {
     return undefined;
   }
-  const vector = (payload as { embeddings?: number[][] }).embeddings?.[0];
-  return vector && vector.length > 0 ? vector : undefined;
+  return asFiniteVector((payload as { embeddings?: unknown[] }).embeddings?.[0]);
 }
 
 const PROTOCOL: Record<EmbeddingProtocol, ProtocolSpec> = {
@@ -71,7 +83,7 @@ const PROTOCOL: Record<EmbeddingProtocol, ProtocolSpec> = {
     truncate: false,
     sendDimensions: true,
     sendAuth: true,
-    strictDimensions: false,
+    strictDimensions: true,
     url: (endpoint) => (endpoint.endsWith("/v1") ? `${endpoint}/embeddings` : `${endpoint}/v1/embeddings`),
     parse: openaiVector,
   },
@@ -91,6 +103,9 @@ const PROTOCOL: Record<EmbeddingProtocol, ProtocolSpec> = {
 
 function resolveDimensions(explicit: number | undefined, protocol: EmbeddingProtocol): number {
   if (explicit !== undefined) {
+    if (!Number.isInteger(explicit) || explicit <= 0) {
+      throw new MnemonEmbeddingError("dimensions must be a positive integer");
+    }
     return explicit;
   }
   const raw = process.env.MNEMON_EMBED_DIMENSIONS;
@@ -155,7 +170,13 @@ export class HttpEmbeddingProvider implements EmbeddingProvider {
     if (!response.ok) {
       throw new MnemonEmbeddingError(`${spec.label} embedding failed: ${response.status}`);
     }
-    const vector = spec.parse(await response.json());
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      throw new MnemonEmbeddingError(`${spec.label} returned invalid JSON`, { cause: error });
+    }
+    const vector = spec.parse(payload);
     if (!vector) {
       throw new MnemonEmbeddingError(`${spec.label} returned no embedding`);
     }

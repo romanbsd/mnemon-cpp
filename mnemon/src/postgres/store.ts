@@ -49,7 +49,7 @@ const INSIGHT_COLS = `
           tags, entities, source, access_count, stored_at, created_at, updated_at, deleted_at,
           last_accessed_at, effective_importance`;
 
-function insightSelect(schema: string, embedding: boolean): string {
+function insightSelect(embedding: boolean): string {
   return embedding ? `${INSIGHT_COLS}, embedding` : INSIGHT_COLS;
 }
 
@@ -162,7 +162,7 @@ export class PostgresMnemonStore implements MnemonStore {
 
   async getActiveInsight(id: string): Promise<InsightRecord | null> {
     const result = await this.pool.query(
-      `SELECT ${insightSelect(this.s, false)} FROM ${this.s}.insights WHERE id = $1::uuid AND deleted_at IS NULL`,
+      `SELECT ${insightSelect(false)} FROM ${this.s}.insights WHERE id = $1::uuid AND deleted_at IS NULL`,
       [id],
     );
     const row = result.rows[0] as Record<string, unknown> | undefined;
@@ -174,7 +174,7 @@ export class PostgresMnemonStore implements MnemonStore {
       return [];
     }
     const result = await this.pool.query(
-      `SELECT ${insightSelect(this.s, options?.embedding === true)} FROM ${this.s}.insights WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
+      `SELECT ${insightSelect(options?.embedding === true)} FROM ${this.s}.insights WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
       [ids],
     );
     return result.rows.map((row) => mapInsightRow(row as Record<string, unknown>));
@@ -182,7 +182,7 @@ export class PostgresMnemonStore implements MnemonStore {
 
   async findExactDuplicate(contentHash: string): Promise<InsightRecord | null> {
     const result = await this.pool.query(
-      `SELECT ${insightSelect(this.s, false)} FROM ${this.s}.insights WHERE content_hash = $1 AND deleted_at IS NULL`,
+      `SELECT ${insightSelect(false)} FROM ${this.s}.insights WHERE content_hash = $1 AND deleted_at IS NULL`,
       [contentHash],
     );
     const row = result.rows[0] as Record<string, unknown> | undefined;
@@ -375,7 +375,7 @@ export class PostgresMnemonStore implements MnemonStore {
   }): Promise<InsightRecord[]> {
     const result = await this.pool.query(
       `
-      SELECT ${insightSelect(this.s, false)}
+      SELECT ${insightSelect(false)}
       FROM ${this.s}.insights
       WHERE deleted_at IS NULL
         AND ($2::text IS NULL OR source = $2)
@@ -439,7 +439,7 @@ export class PostgresMnemonStore implements MnemonStore {
     const queryEntities = uniquePreserveOrder(input.queryEntities.map((e) => e.toLowerCase()).filter((e) => e.length > 0));
     const result = await this.pool.query(
       `
-      SELECT ${insightSelect(this.s, false)},
+      SELECT ${insightSelect(false)},
              COALESCE(tok.count, 0)::double precision / NULLIF(cardinality($2::text[]), 0) AS keyword,
              COALESCE(ent.count, 0)::double precision / GREATEST(1, cardinality($3::text[])) AS entity,
              CASE
@@ -558,7 +558,11 @@ export class PostgresMnemonStore implements MnemonStore {
           JOIN ${this.s}.insights AS i
             ON i.deleted_at IS NULL
            AND i.id <> $1::uuid
-           AND i.entities @> jsonb_build_array(e.entity)
+           AND EXISTS (
+                 SELECT 1
+                 FROM jsonb_array_elements_text(i.entities) AS stored
+                 WHERE lower(stored) = lower(e.entity)
+               )
       )
       SELECT 'latest' AS bucket, id, content, created_at, NULL::text AS entity, NULL::uuid AS target_id, NULL::int AS ord, NULL::int AS rn
       FROM latest
@@ -749,7 +753,7 @@ class PostgresMnemonStoreTx implements MnemonStoreTx {
         ) VALUES (
           $1::uuid, $2, $3, $4, $5::text[], $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12, $13::vector, $14
         )
-        RETURNING ${insightSelect(this.s, false)}
+        RETURNING ${insightSelect(false)}
         `,
         [
           record.id,
@@ -784,12 +788,17 @@ class PostgresMnemonStoreTx implements MnemonStoreTx {
     if (edges.length === 0) {
       return [];
     }
-    const sourceIds = edges.map((e) => e.sourceId);
-    const targetIds = edges.map((e) => e.targetId);
-    const types = edges.map((e) => e.edgeType);
-    const weights = edges.map((e) => e.weight);
-    const metas = edges.map((e) => JSON.stringify(e.metadata));
-    const created = edges.map((e) => e.createdAt);
+    const unique = new Map<string, NewEdgeRecord>();
+    for (const edge of edges) {
+      unique.set(`${edge.sourceId}\0${edge.targetId}\0${edge.edgeType}`, edge);
+    }
+    const deduped = [...unique.values()];
+    const sourceIds = deduped.map((e) => e.sourceId);
+    const targetIds = deduped.map((e) => e.targetId);
+    const types = deduped.map((e) => e.edgeType);
+    const weights = deduped.map((e) => e.weight);
+    const metas = deduped.map((e) => JSON.stringify(e.metadata));
+    const created = deduped.map((e) => e.createdAt);
     const result = await this.client.query(
       `
       INSERT INTO ${this.s}.edges (source_id, target_id, edge_type, weight, metadata, created_at)

@@ -58,6 +58,24 @@ describe("LlamaCppEmbeddingProvider", () => {
     await expect(provider.embed("hello", "query")).resolves.toEqual([1, 2]);
   });
 
+  it("rejects non-positive or non-integer explicit dimensions", () => {
+    expect(() => new LlamaCppEmbeddingProvider({ dimensions: 0 })).toThrow(MnemonEmbeddingError);
+    expect(() => new LlamaCppEmbeddingProvider({ dimensions: -3 })).toThrow(MnemonEmbeddingError);
+    expect(() => new LlamaCppEmbeddingProvider({ dimensions: 1.5 })).toThrow(MnemonEmbeddingError);
+  });
+
+  it("rejects non-finite embedding elements and invalid JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      async () => new Response(JSON.stringify({ data: [{ embedding: [0.1, null, 0.2] }] }), { status: 200 }),
+    );
+    const provider = new LlamaCppEmbeddingProvider({ dimensions: 3 });
+    await expect(provider.embed("hello", "query")).rejects.toBeInstanceOf(MnemonEmbeddingError);
+
+    vi.stubGlobal("fetch", async () => new Response("not-json", { status: 200 }));
+    await expect(provider.embed("hello", "query")).rejects.toBeInstanceOf(MnemonEmbeddingError);
+  });
+
   it("throws when llama.cpp is unavailable", async () => {
     vi.stubGlobal("fetch", async () => {
       throw new Error("connect ECONNREFUSED");
@@ -93,6 +111,18 @@ describe("OpenAIEmbeddingProvider", () => {
         body: { input: "hello", model: "text-embedding-3-small", dimensions: 2 },
       },
     ]);
+  });
+
+  it("rejects a dimension mismatch when strictDimensions is on", async () => {
+    vi.stubGlobal(
+      "fetch",
+      async () => new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), { status: 200 }),
+    );
+    const provider = new OpenAIEmbeddingProvider({
+      endpoint: "http://127.0.0.1:4000/v1",
+      dimensions: 2,
+    });
+    await expect(provider.embed("hello", "query")).rejects.toBeInstanceOf(MnemonEmbeddingError);
   });
 });
 

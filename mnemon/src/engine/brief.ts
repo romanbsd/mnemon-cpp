@@ -10,6 +10,9 @@ export function flattenWhitespace(content: string): string {
  * boundary, and append an ellipsis. Mirrors the C++/Go `--brief` projection.
  */
 export function makeBriefExcerpt(content: string, maxChars: number): string {
+  if (!Number.isInteger(maxChars) || maxChars <= 0) {
+    throw new RangeError("maxChars must be a positive integer");
+  }
   const flat = flattenWhitespace(content);
   const points = [...flat];
   if (points.length <= maxChars) {

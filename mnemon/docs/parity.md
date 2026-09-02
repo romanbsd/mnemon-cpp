@@ -16,10 +16,11 @@ Release gates remain the TypeScript corpus quality checks in
 | Embeddings disabled (`MNEMON_EMBED_ENDPOINT=http://127.0.0.1:1`) | The CLIs cannot ingest fixture vectors. A live Ollama instance on `:11434` would embed only the CLI sides. |
 | Wall-clock `createdAt` | The CLIs stamp `time.Now()`. Fixture dates from `corpus.json` are used only by the TypeScript quality suite. |
 | IDs remapped by content | Go/C++ allocate UUIDs; reports use corpus keys. |
-| C++ is optional | Used when `MNEMON_CPP_BIN` or `build/mnemon` exists. Go is required (`MNEMON_GO_BIN` or `mnemon/.cache/mnemon-go`). |
+| C++ is optional | Used when `MNEMON_CPP_BIN` or `build/mnemon` exists. Go is required (`MNEMON_GO_BIN` or `.cache/mnemon-go`). |
 
 ```bash
 # from ./mnemon
+mkdir -p .cache
 go build -o .cache/mnemon-go /path/to/mnemon-go   # once
 npm run db:up
 npm run test:parity
@@ -57,7 +58,7 @@ includes `never` / `don't` / `no longer` but not the word `not`, so
 "User does not prefer dark mode" replaces "User prefers dark mode". The
 deploy / cycle / tie pairs share domain vocabulary the same way and are
 also destroyed. TypeScript expected-hit rate on the latest no-embed run is
-**73.9%** vs Go / C++ **56.5%**, largely because those four replacements
+**91.3%** vs Go / C++ **56.5%**, largely because those four replacements
 remove answers the query fixtures still ask for.
 
 Decision agreement vs each CLI is **87.1%** (27/31). The four disagreements

@@ -32,6 +32,12 @@ describe("makeBriefExcerpt", () => {
   it("strips trailing whitespace from the prefix before the ellipsis", () => {
     expect(makeBriefExcerpt("abc de", 5)).toBe("abc\u2026");
   });
+
+  it("rejects a non-positive or non-integer limit", () => {
+    expect(() => makeBriefExcerpt("hello", 0)).toThrow(RangeError);
+    expect(() => makeBriefExcerpt("hello", -1)).toThrow(RangeError);
+    expect(() => makeBriefExcerpt("hello", 1.5)).toThrow(RangeError);
+  });
 });
 
 describe("validateRecallInput brief", () => {

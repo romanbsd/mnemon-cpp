@@ -173,7 +173,7 @@ export function traverseGraph(input: {
         }
         break;
       }
-      const next: Array<{ id: string; score: number }> = [];
+      const next = new Map<string, number>();
       for (const node of frontier) {
         for (const edge of adj.get(node.id) ?? []) {
           const neighbor = edge.sourceId === node.id ? edge.targetId : edge.sourceId;
@@ -192,12 +192,16 @@ export function traverseGraph(input: {
           }
           if (!local.has(neighbor)) {
             local.add(neighbor);
-            next.push({ id: neighbor, score: nextScore });
+            next.set(neighbor, nextScore);
+          } else if (next.has(neighbor) && nextScore > (next.get(neighbor) ?? Number.NEGATIVE_INFINITY)) {
+            next.set(neighbor, nextScore);
           }
         }
       }
-      next.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
-      frontier = next.slice(0, limits.beam);
+      const ranked = [...next.entries()]
+        .map(([id, score]) => ({ id, score }))
+        .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+      frontier = ranked.slice(0, limits.beam);
       traversed = scores.size;
     }
   }

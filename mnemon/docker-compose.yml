@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: mnemon
       POSTGRES_DB: mnemon
     ports:
-      - "55432:5432"
+      - "127.0.0.1:55432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mnemon -d mnemon"]
       interval: 2s
@@ -28,7 +28,7 @@ services:
       LLAMA_ARG_POOLING: mean
       LLAMA_CACHE: /models
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - llama-models:/models
     healthcheck:

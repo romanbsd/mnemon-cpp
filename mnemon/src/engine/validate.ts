@@ -143,7 +143,7 @@ export function validateRememberInput(
     fail(
       "category",
       "invalid_enum",
-      `invalid category "${String(category)}"; valid: preference, decision, fact, insight, context, general`,
+      `invalid category "${String(category)}"; valid: ${INSIGHT_CATEGORIES.join(", ")}`,
     );
   }
   const importance = input.importance ?? defaults.importance;
@@ -234,7 +234,7 @@ export function validateListInput(input?: {
     fail(
       "category",
       "invalid_enum",
-      `invalid category "${String(input.category)}"; valid: preference, decision, fact, insight, context, general`,
+      `invalid category "${String(input.category)}"; valid: ${INSIGHT_CATEGORIES.join(", ")}`,
     );
   }
   const since = input?.since ? parseTimestamp(input.since, "since") : undefined;
@@ -283,11 +283,10 @@ export function validateLinkInput(input: {
     fail("edgeType", "invalid_enum", `invalid edgeType "${String(input.edgeType)}"`);
   }
   const metadata = input.metadata ?? {};
-  for (const [k, v] of Object.entries(metadata)) {
+  for (const v of Object.values(metadata)) {
     if (typeof v !== "string") {
       fail("metadata", "invalid", "metadata values must be strings");
     }
-    void k;
   }
   return {
     sourceId,
