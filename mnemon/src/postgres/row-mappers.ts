@@ -1,4 +1,4 @@
-import type { Insight } from "../types.js";
+import type { Edge, Insight } from "../types.js";
 import type { EdgeRecord, InsightRecord } from "./schema.js";
 
 export function asDate(value: unknown): Date {
@@ -88,4 +88,15 @@ export function toPublicInsight(record: InsightRecord): Insight {
     insight.deletedAt = record.deletedAt.toISOString();
   }
   return insight;
+}
+
+export function toPublicEdge(record: EdgeRecord): Edge {
+  return {
+    sourceId: record.sourceId,
+    targetId: record.targetId,
+    edgeType: record.edgeType,
+    weight: record.weight,
+    metadata: record.metadata,
+    createdAt: record.createdAt.toISOString(),
+  };
 }

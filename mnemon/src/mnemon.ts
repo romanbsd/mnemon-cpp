@@ -51,7 +51,7 @@ import {
 } from "./engine/validate.js";
 import { MnemonConfigurationError, MnemonEmbeddingError, MnemonNotFoundError } from "./errors.js";
 import { runMigrations } from "./postgres/migrations.js";
-import { toPublicInsight } from "./postgres/row-mappers.js";
+import { toPublicEdge, toPublicInsight } from "./postgres/row-mappers.js";
 import { PostgresMnemonStore, isUniqueViolation, type MnemonStore } from "./postgres/store.js";
 import type { InsightRecord } from "./postgres/schema.js";
 import {
@@ -422,14 +422,7 @@ class MnemonService implements Mnemon {
         now,
       ),
     );
-    return {
-      sourceId: edge.sourceId,
-      targetId: edge.targetId,
-      edgeType: edge.edgeType,
-      weight: edge.weight,
-      metadata: edge.metadata,
-      createdAt: edge.createdAt.toISOString(),
-    };
+    return toPublicEdge(edge);
   }
 
   async related(

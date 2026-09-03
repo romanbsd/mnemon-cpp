@@ -37,15 +37,15 @@ export async function runMigrations(pool: Pool, schema: string): Promise<number>
       return MIGRATION_VERSION;
     }
 
-    await client.query(`
+    const tables = [
+      `
       CREATE TABLE IF NOT EXISTS ${s}.settings (
           key          text PRIMARY KEY,
           value        jsonb NOT NULL,
           updated_at   timestamptz NOT NULL DEFAULT clock_timestamp()
       )
-    `);
-
-    await client.query(`
+    `,
+      `
       CREATE TABLE IF NOT EXISTS ${s}.insights (
           id                    uuid PRIMARY KEY,
           content               text NOT NULL,
@@ -72,45 +72,8 @@ export async function runMigrations(pool: Pool, schema: string): Promise<number>
                                 ) STORED,
           effective_importance  double precision NOT NULL DEFAULT 0.5
       )
-    `);
-
-    await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS insights_active_content_hash_uq
-          ON ${s}.insights (content_hash)
-          WHERE deleted_at IS NULL
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS insights_active_created_idx
-          ON ${s}.insights (created_at DESC, id)
-          WHERE deleted_at IS NULL
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS insights_active_source_created_idx
-          ON ${s}.insights (source, created_at DESC, id)
-          WHERE deleted_at IS NULL
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS insights_search_tokens_gin_idx
-          ON ${s}.insights USING gin (search_tokens)
-          WHERE deleted_at IS NULL
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS insights_search_tsv_gin_idx
-          ON ${s}.insights USING gin (search_tsv)
-          WHERE deleted_at IS NULL
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS insights_entities_gin_idx
-          ON ${s}.insights USING gin (entities jsonb_path_ops)
-          WHERE deleted_at IS NULL
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS insights_active_embedding_present_idx
-          ON ${s}.insights (id)
-          WHERE deleted_at IS NULL AND embedding IS NOT NULL
-    `);
-
-    await client.query(`
+    `,
+      `
       CREATE TABLE IF NOT EXISTS ${s}.edges (
           source_id   uuid NOT NULL REFERENCES ${s}.insights(id) ON DELETE CASCADE,
           target_id   uuid NOT NULL REFERENCES ${s}.insights(id) ON DELETE CASCADE,
@@ -124,17 +87,8 @@ export async function runMigrations(pool: Pool, schema: string): Promise<number>
           PRIMARY KEY (source_id, target_id, edge_type),
           CHECK (source_id <> target_id)
       )
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS edges_target_type_idx
-          ON ${s}.edges (target_id, edge_type)
-    `);
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS edges_source_type_idx
-          ON ${s}.edges (source_id, edge_type)
-    `);
-
-    await client.query(`
+    `,
+      `
       CREATE TABLE IF NOT EXISTS ${s}.oplog (
           id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
           operation   text NOT NULL,
@@ -142,11 +96,64 @@ export async function runMigrations(pool: Pool, schema: string): Promise<number>
           detail      jsonb NOT NULL DEFAULT '{}'::jsonb,
           created_at  timestamptz NOT NULL
       )
-    `);
-    await client.query(`
+    `,
+    ];
+    for (const ddl of tables) {
+      await client.query(ddl);
+    }
+
+    const indexes = [
+      `
+      CREATE UNIQUE INDEX IF NOT EXISTS insights_active_content_hash_uq
+          ON ${s}.insights (content_hash)
+          WHERE deleted_at IS NULL
+    `,
+      `
+      CREATE INDEX IF NOT EXISTS insights_active_created_idx
+          ON ${s}.insights (created_at DESC, id)
+          WHERE deleted_at IS NULL
+    `,
+      `
+      CREATE INDEX IF NOT EXISTS insights_active_source_created_idx
+          ON ${s}.insights (source, created_at DESC, id)
+          WHERE deleted_at IS NULL
+    `,
+      `
+      CREATE INDEX IF NOT EXISTS insights_search_tokens_gin_idx
+          ON ${s}.insights USING gin (search_tokens)
+          WHERE deleted_at IS NULL
+    `,
+      `
+      CREATE INDEX IF NOT EXISTS insights_search_tsv_gin_idx
+          ON ${s}.insights USING gin (search_tsv)
+          WHERE deleted_at IS NULL
+    `,
+      `
+      CREATE INDEX IF NOT EXISTS insights_entities_gin_idx
+          ON ${s}.insights USING gin (entities jsonb_path_ops)
+          WHERE deleted_at IS NULL
+    `,
+      `
+      CREATE INDEX IF NOT EXISTS insights_active_embedding_present_idx
+          ON ${s}.insights (id)
+          WHERE deleted_at IS NULL AND embedding IS NOT NULL
+    `,
+      `
+      CREATE INDEX IF NOT EXISTS edges_target_type_idx
+          ON ${s}.edges (target_id, edge_type)
+    `,
+      `
+      CREATE INDEX IF NOT EXISTS edges_source_type_idx
+          ON ${s}.edges (source_id, edge_type)
+    `,
+      `
       CREATE INDEX IF NOT EXISTS oplog_created_idx
           ON ${s}.oplog (created_at DESC, id DESC)
-    `);
+    `,
+    ];
+    for (const ddl of indexes) {
+      await client.query(ddl);
+    }
 
     await client.query(`INSERT INTO ${s}.schema_migrations (version) VALUES ($1)`, [MIGRATION_VERSION]);
     return MIGRATION_VERSION;

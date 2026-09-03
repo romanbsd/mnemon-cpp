@@ -75,6 +75,10 @@ function requireLimit(limit: number, max: number, field = "limit"): number {
   return limit;
 }
 
+function optionalTrimmed(value: string | undefined, field: string, max: number): string | undefined {
+  return value ? requireNonEmptyTrimmed(value, field, max) : undefined;
+}
+
 function requireStringList(values: readonly string[] | undefined, field: string, maxItems: number, maxLen: number): string[] {
   if (!values) {
     return [];
@@ -153,14 +157,11 @@ export function validateRememberInput(
       `invalid category "${String(category)}"; valid: ${INSIGHT_CATEGORIES.join(", ")}`,
     );
   }
-  const importance = input.importance ?? defaults.importance;
-  if (!Number.isInteger(importance) || importance < 1 || importance > 5) {
-    fail("importance", "out_of_range", "importance must be an integer from 1 through 5");
-  }
+  const importance = requireLimit(input.importance ?? defaults.importance, 5, "importance") as 1 | 2 | 3 | 4 | 5;
   return {
     content,
     category,
-    importance: importance as 1 | 2 | 3 | 4 | 5,
+    importance,
     tags: requireStringList(input.tags, "tags", MAX_TAGS, MAX_TAG_CODE_POINTS),
     entities: requireStringList(input.entities, "entities", MAX_ENTITIES, MAX_ENTITY_CODE_POINTS),
     source: requireNonEmptyTrimmed(input.source ?? defaults.source, "source", MAX_SOURCE_CODE_POINTS),
@@ -194,7 +195,7 @@ export function validateRecallInput(
     query,
     limit,
     intent: input.intent,
-    source: input.source ? requireNonEmptyTrimmed(input.source, "source", MAX_SOURCE_CODE_POINTS) : undefined,
+    source: optionalTrimmed(input.source, "source", MAX_SOURCE_CODE_POINTS),
     brief,
     excerptChars,
   };
@@ -210,7 +211,7 @@ export function validateSearchInput(input: { query: string; limit?: number; sour
   return {
     query,
     limit,
-    source: input.source ? requireNonEmptyTrimmed(input.source, "source", MAX_SOURCE_CODE_POINTS) : undefined,
+    source: optionalTrimmed(input.source, "source", MAX_SOURCE_CODE_POINTS),
   };
 }
 
@@ -242,7 +243,7 @@ export function validateListInput(input?: {
   }
   return {
     limit,
-    source: input?.source ? requireNonEmptyTrimmed(input.source, "source", MAX_SOURCE_CODE_POINTS) : undefined,
+    source: optionalTrimmed(input?.source, "source", MAX_SOURCE_CODE_POINTS),
     category: input?.category,
     since,
     until,
@@ -256,9 +257,7 @@ export function validateLogInput(input?: { limit?: number; operation?: string })
   const limit = requireLimit(input?.limit ?? DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT);
   return {
     limit,
-    operation: input?.operation
-      ? requireNonEmptyTrimmed(input.operation, "operation", MAX_SOURCE_CODE_POINTS)
-      : undefined,
+    operation: optionalTrimmed(input?.operation, "operation", MAX_SOURCE_CODE_POINTS),
   };
 }
 

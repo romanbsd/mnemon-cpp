@@ -46,6 +46,13 @@ const TOKEN_OVERLAP = `
           WHERE token = ANY(q.tokens)
       ) AS matched`;
 
+const TOKEN_OVERLAP_LEFT = `
+      LEFT JOIN LATERAL (
+          SELECT count(*) AS count
+          FROM unnest(i.search_tokens) AS token
+          WHERE token = ANY(q.tokens)
+      ) AS matched ON true`;
+
 const INSIGHT_COLS = `
           id, content, normalized_content, content_hash, search_tokens, category, importance,
           tags, entities, source, access_count, stored_at, created_at, updated_at, deleted_at,
@@ -162,33 +169,44 @@ export class PostgresMnemonStore implements MnemonStore {
     return withTransaction(this.pool, async (client) => fn(new PostgresMnemonStoreTx(client, this.s)));
   }
 
+  private edgeHopJoin(fromCol: string): string {
+    return `
+      JOIN ${this.s}.edges AS e ON e.source_id = ${fromCol} OR e.target_id = ${fromCol}
+      JOIN ${this.s}.insights AS neigh
+        ON neigh.id = CASE WHEN e.source_id = ${fromCol} THEN e.target_id ELSE e.source_id END
+       AND neigh.deleted_at IS NULL`;
+  }
+
   async getActiveInsight(id: string): Promise<InsightRecord | null> {
-    const result = await this.pool.query(
-      `SELECT ${insightSelect(false)} FROM ${this.s}.insights WHERE id = $1::uuid AND deleted_at IS NULL`,
-      [id],
-    );
-    const row = result.rows[0] as Record<string, unknown> | undefined;
-    return row ? mapInsightRow(row) : null;
+    return this.queryInsight("id = $1::uuid", [id]);
   }
 
   async loadInsightsByIds(ids: readonly string[], options?: { embedding?: boolean }): Promise<InsightRecord[]> {
     if (ids.length === 0) {
       return [];
     }
+    return this.queryInsights("id = ANY($1::uuid[])", [ids], options);
+  }
+
+  async findExactDuplicate(contentHash: string): Promise<InsightRecord | null> {
+    return this.queryInsight("content_hash = $1", [contentHash]);
+  }
+
+  private async queryInsights(
+    where: string,
+    params: unknown[],
+    options?: { embedding?: boolean },
+  ): Promise<InsightRecord[]> {
     const result = await this.pool.query(
-      `SELECT ${insightSelect(options?.embedding === true)} FROM ${this.s}.insights WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
-      [ids],
+      `SELECT ${insightSelect(options?.embedding === true)} FROM ${this.s}.insights WHERE deleted_at IS NULL AND ${where}`,
+      params,
     );
     return result.rows.map((row) => mapInsightRow(row as Record<string, unknown>));
   }
 
-  async findExactDuplicate(contentHash: string): Promise<InsightRecord | null> {
-    const result = await this.pool.query(
-      `SELECT ${insightSelect(false)} FROM ${this.s}.insights WHERE content_hash = $1 AND deleted_at IS NULL`,
-      [contentHash],
-    );
-    const row = result.rows[0] as Record<string, unknown> | undefined;
-    return row ? mapInsightRow(row) : null;
+  private async queryInsight(where: string, params: unknown[]): Promise<InsightRecord | null> {
+    const rows = await this.queryInsights(where, params);
+    return rows[0] ?? null;
   }
 
   async findKeywordCandidates(queryTokens: readonly string[], limit: number): Promise<KeywordHit[]> {
@@ -342,11 +360,7 @@ export class PostgresMnemonStore implements MnemonStore {
              CASE WHEN q.fts <> ''::tsquery THEN ts_rank_cd(i.search_tsv, q.fts) ELSE 0 END AS fts
       FROM ${this.s}.insights AS i
       CROSS JOIN q
-      LEFT JOIN LATERAL (
-          SELECT count(*) AS count
-          FROM unnest(i.search_tokens) AS token
-          WHERE token = ANY(q.tokens)
-      ) AS matched ON true
+      ${TOKEN_OVERLAP_LEFT}
       WHERE i.deleted_at IS NULL
         AND ($4::text IS NULL OR i.source = $4)
         AND (
@@ -492,10 +506,7 @@ export class PostgresMnemonStore implements MnemonStore {
         `
         SELECT DISTINCT ON (neigh.id) neigh.id, e.weight, e.edge_type AS via
         FROM unnest($1::uuid[]) AS f(id)
-        JOIN ${this.s}.edges AS e ON e.source_id = f.id OR e.target_id = f.id
-        JOIN ${this.s}.insights AS neigh
-          ON neigh.id = CASE WHEN e.source_id = f.id THEN e.target_id ELSE e.source_id END
-         AND neigh.deleted_at IS NULL
+        ${this.edgeHopJoin("f.id")}
         WHERE ($2::text IS NULL OR e.edge_type = $2)
           AND NOT neigh.id = ANY ($3::uuid[])
         ORDER BY neigh.id, e.created_at ASC, e.ctid ASC
@@ -597,13 +608,13 @@ export class PostgresMnemonStore implements MnemonStore {
         context.latestSameSource = {
           id: String(row.id),
           content: String(row.content),
-          createdAt: row.created_at instanceof Date ? row.created_at : new Date(String(row.created_at)),
+          createdAt: asDate(row.created_at),
         };
       } else if (bucket === "window" && row.id) {
         context.recentWithin24h.push({
           id: String(row.id),
           content: String(row.content),
-          createdAt: row.created_at instanceof Date ? row.created_at : new Date(String(row.created_at)),
+          createdAt: asDate(row.created_at),
         });
       } else if (bucket === "causal" && row.id) {
         context.causalPrevious.push({ id: String(row.id), content: String(row.content) });
@@ -680,10 +691,7 @@ export class PostgresMnemonStore implements MnemonStore {
                         END AS score,
                e.edge_type AS via
         FROM unnest($5::uuid[], $6::uuid[], $7::float8[]) AS s(id, anchor_id, score)
-        JOIN ${this.s}.edges AS e ON e.source_id = s.id OR e.target_id = s.id
-        JOIN ${this.s}.insights AS neigh
-          ON neigh.id = CASE WHEN e.source_id = s.id THEN e.target_id ELSE e.source_id END
-         AND neigh.deleted_at IS NULL
+        ${this.edgeHopJoin("s.id")}
         ORDER BY 3 DESC, neigh.id ASC, s.anchor_id ASC, e.edge_type ASC
         `,
         [

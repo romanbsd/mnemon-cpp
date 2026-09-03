@@ -2,6 +2,7 @@ import { DUPLICATE_MAX_LENGTH_RATIO, DUPLICATE_TOKEN_SIMILARITY } from "./consta
 import { codePointLength } from "./normalize.js";
 import { cosineSimilarity, jaccardTokenSimilarity, setsEqual, symmetricTokenSimilarity } from "./similarity.js";
 import { tokenize } from "./tokenize.js";
+import type { DiffMatch, DiffSuggestion } from "../types.js";
 
 export interface DuplicateCandidate {
   id: string;
@@ -61,17 +62,6 @@ export function classifySafeDuplicate(
     }
   }
   return undefined;
-}
-
-export type DiffSuggestion = "ADD" | "DUPLICATE" | "CONFLICT" | "UPDATE";
-
-export interface DiffMatch {
-  id: string;
-  content: string;
-  tokenSimilarity: number;
-  cosineSimilarity: number;
-  similarity: number;
-  suggestion: DiffSuggestion;
 }
 
 export interface DiffResult {

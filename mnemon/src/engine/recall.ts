@@ -44,6 +44,9 @@ export function normalizeEliteGraph(
   return graphById;
 }
 
+const EMBEDDED_SCORE_WEIGHTS = { keyword: 0.3, entity: 0.15, similarity: 0.35, graph: 0.2 } as const;
+const KEYWORD_SCORE_WEIGHTS = { keyword: 0.45, entity: 0.25, graph: 0.3 } as const;
+
 export function composeFinalScore(input: {
   keyword: number;
   entity: number;
@@ -52,9 +55,18 @@ export function composeFinalScore(input: {
   hasQueryEmbedding: boolean;
 }): number {
   if (input.hasQueryEmbedding) {
-    return 0.3 * input.keyword + 0.15 * input.entity + 0.35 * input.similarity + 0.2 * input.graph;
+    return (
+      EMBEDDED_SCORE_WEIGHTS.keyword * input.keyword +
+      EMBEDDED_SCORE_WEIGHTS.entity * input.entity +
+      EMBEDDED_SCORE_WEIGHTS.similarity * input.similarity +
+      EMBEDDED_SCORE_WEIGHTS.graph * input.graph
+    );
   }
-  return 0.45 * input.keyword + 0.25 * input.entity + 0.3 * input.graph;
+  return (
+    KEYWORD_SCORE_WEIGHTS.keyword * input.keyword +
+    KEYWORD_SCORE_WEIGHTS.entity * input.entity +
+    KEYWORD_SCORE_WEIGHTS.graph * input.graph
+  );
 }
 
 export function causalTopologicalOrder<T extends { id: string; score: number }>(

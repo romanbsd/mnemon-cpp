@@ -45,6 +45,12 @@ export interface ResolvedConfig {
 
 const SCHEMA_RE = /^[a-z_][a-z0-9_]*$/;
 
+function requirePositiveInt(value: number, label: string): void {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new MnemonConfigurationError(`${label} must be a positive integer`);
+  }
+}
+
 export function resolveConfig(config: MnemonConfig): ResolvedConfig {
   const hasUrl = typeof config.databaseUrl === "string" && config.databaseUrl.length > 0;
   const hasPool = config.pool !== undefined;
@@ -61,15 +67,11 @@ export function resolveConfig(config: MnemonConfig): ResolvedConfig {
 
   const provider = config.embeddingProvider;
   if (provider !== undefined) {
-    if (!Number.isInteger(provider.dimensions) || provider.dimensions <= 0) {
-      throw new MnemonConfigurationError("embeddingProvider.dimensions must be a positive integer");
-    }
+    requirePositiveInt(provider.dimensions, "embeddingProvider.dimensions");
   }
 
   if (config.embeddingDimensions !== undefined) {
-    if (!Number.isInteger(config.embeddingDimensions) || config.embeddingDimensions <= 0) {
-      throw new MnemonConfigurationError("embeddingDimensions must be a positive integer");
-    }
+    requirePositiveInt(config.embeddingDimensions, "embeddingDimensions");
     if (provider !== undefined && provider.dimensions !== config.embeddingDimensions) {
       throw new MnemonConfigurationError(
         `embeddingDimensions (${config.embeddingDimensions}) does not match provider (${provider.dimensions})`,

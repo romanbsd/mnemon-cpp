@@ -47,18 +47,34 @@ function asFiniteVector(vector: unknown): number[] | undefined {
   return out;
 }
 
-function openaiVector(payload: unknown): number[] | undefined {
-  if (typeof payload !== "object" || payload === null || !("data" in payload)) {
+function requirePositiveInt(value: number, label: string): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new MnemonEmbeddingError(`${label} must be a positive integer`);
+  }
+  return value;
+}
+
+function vectorField(payload: unknown, key: string): unknown {
+  if (typeof payload !== "object" || payload === null || !(key in payload)) {
     return undefined;
   }
-  return asFiniteVector((payload as { data?: Array<{ embedding?: unknown }> }).data?.[0]?.embedding);
+  return (payload as Record<string, unknown>)[key];
+}
+
+function openaiVector(payload: unknown): number[] | undefined {
+  const first = vectorField(payload, "data");
+  if (!Array.isArray(first)) {
+    return undefined;
+  }
+  return asFiniteVector((first as Array<{ embedding?: unknown }>)[0]?.embedding);
 }
 
 function ollamaVector(payload: unknown): number[] | undefined {
-  if (typeof payload !== "object" || payload === null || !("embeddings" in payload)) {
+  const first = vectorField(payload, "embeddings");
+  if (!Array.isArray(first)) {
     return undefined;
   }
-  return asFiniteVector((payload as { embeddings?: unknown[] }).embeddings?.[0]);
+  return asFiniteVector(first[0]);
 }
 
 const PROTOCOL: Record<EmbeddingProtocol, ProtocolSpec> = {
@@ -103,18 +119,11 @@ const PROTOCOL: Record<EmbeddingProtocol, ProtocolSpec> = {
 
 function resolveDimensions(explicit: number | undefined, protocol: EmbeddingProtocol): number {
   if (explicit !== undefined) {
-    if (!Number.isInteger(explicit) || explicit <= 0) {
-      throw new MnemonEmbeddingError("dimensions must be a positive integer");
-    }
-    return explicit;
+    return requirePositiveInt(explicit, "dimensions");
   }
   const raw = process.env.MNEMON_EMBED_DIMENSIONS;
   if (raw && raw.length > 0) {
-    const parsed = Number(raw);
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      throw new MnemonEmbeddingError("MNEMON_EMBED_DIMENSIONS must be a positive integer");
-    }
-    return parsed;
+    return requirePositiveInt(Number(raw), "MNEMON_EMBED_DIMENSIONS");
   }
   return PROTOCOL[protocol].defaultDimensions;
 }
