@@ -19,6 +19,8 @@ export const MAX_LIST_LIMIT = 100;
 export const DEFAULT_LOG_LIMIT = 50;
 export const MAX_LOG_LIMIT = 500;
 
+export const SEARCH_KEYWORD_WEIGHT = 0.45;
+export const SEARCH_FTS_WEIGHT = 0.55;
 export const RRF_K = 60;
 export const ANCHOR_TOP_K = 20;
 export const VECTOR_ANCHOR_MIN_COSINE = 0.1;

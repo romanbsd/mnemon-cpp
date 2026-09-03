@@ -42,6 +42,14 @@ function extractCjkTitles(text: string, add: (value: string) => void): void {
 
 const RE_WIDE_CAPITAL = /\b([A-Z][a-zA-Z0-9]+)\b/g;
 
+function scanWords(text: string, visit: (word: string) => void): void {
+  for (const word of text.split(/[^a-zA-Z0-9]+/u)) {
+    if (word.length > 0) {
+      visit(word);
+    }
+  }
+}
+
 export function extractEntities(text: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -60,12 +68,12 @@ export function extractEntities(text: string): string[] {
   addMatches(text, RE_MENTION, 1, add);
   extractCjkTitles(text, add);
 
-  for (const word of text.split(/[^a-zA-Z0-9]+/u)) {
+  scanWords(text, (word) => {
     if (TECH_DICTIONARY.has(word) && !seen.has(word)) {
       seen.add(word);
       out.push(word);
     }
-  }
+  });
   return out.slice(0, MAX_ENTITIES);
 }
 
@@ -82,13 +90,13 @@ export function extractEntitiesIndexed(text: string, knownEntities: ReadonlySet<
     seen.add(cand);
     entities.push(cand);
   });
-  for (const word of text.split(/[^a-zA-Z0-9]+/u)) {
-    if (!word || seen.has(word) || ACRONYM_STOPWORDS.has(word) || !knownEntities.has(word)) {
-      continue;
+  scanWords(text, (word) => {
+    if (seen.has(word) || ACRONYM_STOPWORDS.has(word) || !knownEntities.has(word)) {
+      return;
     }
     seen.add(word);
     entities.push(word);
-  }
+  });
   return entities.slice(0, MAX_ENTITIES);
 }
 

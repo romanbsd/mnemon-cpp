@@ -13,6 +13,8 @@ import {
   MAX_RELATED_DEPTH,
   MAX_RELATED_LIMIT,
   MAX_SEMANTIC_EDGES,
+  SEARCH_FTS_WEIGHT,
+  SEARCH_KEYWORD_WEIGHT,
   SEMANTIC_CANDIDATE_MIN_COSINE,
   TEMPORAL_WINDOW_HOURS,
 } from "./engine/constants.js";
@@ -22,6 +24,7 @@ import {
   buildSemanticEdges,
   buildTemporalEdges,
   countEdgesByType,
+  emptyEdgeCounts,
 } from "./engine/edges.js";
 import { makeBriefExcerpt } from "./engine/brief.js";
 import { extractEntitiesIndexed, mergeEntities } from "./engine/entities.js";
@@ -35,7 +38,7 @@ import {
 } from "./engine/recall.js";
 import { effectiveImportance } from "./engine/retention.js";
 import { classifyDiff, classifySafeDuplicate, scoreDuplicateCandidate } from "./engine/diff.js";
-import { sortedSearchTokens, tokenize } from "./engine/tokenize.js";
+import { sortedSearchTokens, sortedTokens } from "./engine/tokenize.js";
 import {
   validateEmbedding,
   validateLinkInput,
@@ -116,12 +119,27 @@ class MnemonService implements Mnemon {
     await runMigrations(this.pool, this.config.schema);
     await this.registerVectorTypes();
     if (this.config.embeddingProvider) {
-      const stored = await this.store.getSetting("embedding_dimensions");
-      if (stored !== undefined && Number(stored) !== this.config.embeddingProvider.dimensions) {
-        throw new MnemonConfigurationError(
-          `embedding provider dimension ${this.config.embeddingProvider.dimensions} does not match store ${String(stored)}`,
-        );
-      }
+      await this.checkStoreSetting(
+        "embedding_dimensions",
+        this.config.embeddingProvider.dimensions,
+        "embedding provider dimension",
+      );
+      await this.checkStoreSetting(
+        "embedding_model",
+        this.config.embeddingProvider.model,
+        "embedding provider model",
+      );
+    }
+  }
+
+  private async checkStoreSetting(
+    key: "embedding_dimensions" | "embedding_model",
+    expected: number | string,
+    label: string,
+  ): Promise<void> {
+    const stored = await this.store.getSetting(key);
+    if (stored !== undefined && String(stored) !== String(expected)) {
+      throw new MnemonConfigurationError(`${label} ${String(expected)} does not match store ${String(stored)}`);
     }
   }
 
@@ -184,18 +202,11 @@ class MnemonService implements Mnemon {
     try {
       const { insight, edges } = await this.store.withTransaction(async (tx) => {
         if (embedding && this.config.embeddingProvider) {
-          try {
-            await tx.establishEmbeddingSettings(
-              this.config.embeddingProvider.dimensions,
-              this.config.embeddingProvider.model,
-              now,
-            );
-          } catch (error) {
-            if (error instanceof Error && error.message.startsWith("embedding dimension")) {
-              throw new MnemonConfigurationError(error.message, { cause: error });
-            }
-            throw error;
-          }
+          await tx.establishEmbeddingSettings(
+            this.config.embeddingProvider.dimensions,
+            this.config.embeddingProvider.model,
+            now,
+          );
         }
 
         const inserted = await tx.insertInsight({
@@ -269,7 +280,7 @@ class MnemonService implements Mnemon {
 
     const intent = validated.intent ?? detectIntent(validated.query);
     const intentSource = validated.intent ? "override" : "auto";
-    const queryTokens = [...tokenize(validated.query)].sort();
+    const queryTokens = sortedTokens(validated.query);
     const known = new Set(await this.store.listKnownEntities());
     const queryEntities = extractEntitiesIndexed(validated.query, known);
 
@@ -439,18 +450,13 @@ class MnemonService implements Mnemon {
       limit,
       edgeType: options?.edgeType,
     });
-    const byId = indexById(await this.store.loadInsightsByIds(walked.map((o) => o.id)));
-    return walked.flatMap((o) => {
-      const insight = byId.get(o.id);
-      if (!insight) {
-        return [];
-      }
+    return flatMapJoined(walked, await this.store.loadInsightsByIds(walked.map((o) => o.id)), (o, insight) => {
       const via = o.viaEdgeType;
       const row: RelatedInsight = { ...toPublicInsight(insight), depth: o.depth };
       if (via && (EDGE_TYPES as readonly string[]).includes(via)) {
         row.viaEdgeType = via as RelatedInsight["viaEdgeType"];
       }
-      return [row];
+      return row;
     });
   }
 
@@ -479,30 +485,22 @@ class MnemonService implements Mnemon {
   async search(input: SearchInput): Promise<SearchResult> {
     await this.ready();
     const validated = validateSearchInput(input);
-    const queryTokens = [...tokenize(validated.query)].sort();
+    const queryTokens = sortedTokens(validated.query);
     const hits = await this.store.searchInsights({
       query: validated.query,
       queryTokens,
       limit: validated.limit,
       source: validated.source,
     });
-    const byId = indexById(await this.store.loadInsightsByIds(hits.map((h) => h.id)));
     return {
-      results: hits.flatMap((hit) => {
-        const insight = byId.get(hit.id);
-        if (!insight) {
-          return [];
-        }
-        const via =
-          hit.keyword > 0 && hit.fts > 0 ? "hybrid" : hit.fts > hit.keyword ? "fts" : "keyword";
-        return [
-          {
-            insight: toPublicInsight(insight),
-            score: 0.45 * hit.keyword + 0.55 * hit.fts,
-            matchedVia: via,
-            signals: { keyword: hit.keyword, fts: hit.fts },
-          },
-        ];
+      results: flatMapJoined(hits, await this.store.loadInsightsByIds(hits.map((h) => h.id)), (hit, insight) => {
+        const via = hit.keyword > 0 && hit.fts > 0 ? "hybrid" : hit.fts > hit.keyword ? "fts" : "keyword";
+        return {
+          insight: toPublicInsight(insight),
+          score: SEARCH_KEYWORD_WEIGHT * hit.keyword + SEARCH_FTS_WEIGHT * hit.fts,
+          matchedVia: via,
+          signals: { keyword: hit.keyword, fts: hit.fts },
+        };
       }),
     };
   }
@@ -584,7 +582,7 @@ class MnemonService implements Mnemon {
       suggestion: "DUPLICATE",
       diff: diff.matches,
       semanticCandidates: [],
-      edgeCounts: { temporal: 0, semantic: 0, causal: 0, entity: 0 },
+      edgeCounts: emptyEdgeCounts(),
     };
   }
 
@@ -592,7 +590,7 @@ class MnemonService implements Mnemon {
     content: string,
     embedding: number[] | undefined,
   ): Promise<Array<{ id: string; content: string; tokenSimilarity: number; cosineSimilarity: number }>> {
-    const tokens = [...tokenize(content)].sort();
+    const tokens = sortedTokens(content);
     const keywordHits = await this.store.findKeywordCandidates(tokens, DEDUP_CANDIDATE_LIMIT);
     const vectorHits = embedding
       ? await this.store.nearestEmbeddings(embedding, { limit: DEDUP_CANDIDATE_LIMIT })
@@ -626,7 +624,6 @@ class MnemonService implements Mnemon {
     const temporal = buildTemporalEdges({
       newId: insight.id,
       newCreatedAt: insight.createdAt,
-      now,
       latestSameSource: context.latestSameSource,
       recentWithin24h: context.recentWithin24h,
     });
@@ -661,31 +658,44 @@ class MnemonService implements Mnemon {
       limit: 5,
       minCosine: SEMANTIC_CANDIDATE_MIN_COSINE,
     });
-    const byId = indexById(await this.store.loadInsightsByIds(hits.map((h) => h.id), { embedding: true }));
-    return hits.flatMap((h) => {
-      const ins = byId.get(h.id);
-      if (!ins) {
-        return [];
-      }
-      const scored = scoreDuplicateCandidate(
-        insight.content,
-        ins.content,
-        insight.embedding ?? undefined,
-        ins.embedding ?? undefined,
-      );
-      return [
-        {
+    return flatMapJoined(
+      hits,
+      await this.store.loadInsightsByIds(hits.map((h) => h.id), { embedding: true }),
+      (h, ins) => {
+        const scored = scoreDuplicateCandidate(
+          insight.content,
+          ins.content,
+          insight.embedding ?? undefined,
+          ins.embedding ?? undefined,
+        );
+        return {
           id: ins.id,
           content: ins.content,
           category: ins.category,
           tokenSimilarity: scored.tokenSimilarity,
           cosineSimilarity: h.cosineSimilarity,
-        } satisfies SimilarMemory,
-      ];
-    });
+        } satisfies SimilarMemory;
+      },
+    );
   }
 }
 
 function indexById<T extends { id: string }>(rows: readonly T[]): Map<string, T> {
   return new Map(rows.map((row) => [row.id, row]));
+}
+
+function flatMapJoined<T extends { id: string }, R>(
+  hits: readonly T[],
+  rows: readonly InsightRecord[],
+  fn: (hit: T, insight: InsightRecord) => R,
+): R[] {
+  const byId = indexById(rows);
+  const out: R[] = [];
+  for (const hit of hits) {
+    const insight = byId.get(hit.id);
+    if (insight) {
+      out.push(fn(hit, insight));
+    }
+  }
+  return out;
 }

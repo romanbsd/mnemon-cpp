@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 
-import { MnemonDatabaseError } from "../errors.js";
+import { MnemonDatabaseError, MnemonError } from "../errors.js";
 
 export function wrapDatabaseError(error: unknown): MnemonDatabaseError {
   if (error instanceof MnemonDatabaseError) {
@@ -30,10 +30,10 @@ export async function withTransaction<T>(pool: Pool, fn: (client: PoolClient) =>
       (wrapped as MnemonDatabaseError & { rollbackError?: unknown }).rollbackError = rollbackError;
       throw wrapped;
     }
-    if (error instanceof Error && (error as { code?: string }).code === "23505") {
+    if (error instanceof MnemonError && !(error instanceof MnemonDatabaseError)) {
       throw error;
     }
-    throw error instanceof MnemonDatabaseError ? error : wrapDatabaseError(error);
+    throw wrapDatabaseError(error);
   } finally {
     client.release(destroyClient);
   }

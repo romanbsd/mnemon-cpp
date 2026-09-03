@@ -1,28 +1,8 @@
-export function keywordScore(queryTokens: Set<string>, insightTokens: Set<string>): number {
-  if (queryTokens.size === 0) {
-    return 0;
-  }
-  let inter = 0;
-  for (const t of queryTokens) {
-    if (insightTokens.has(t)) {
-      inter++;
-    }
-  }
-  return inter / queryTokens.size;
-}
-
 export function jaccardTokenSimilarity(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) {
     return 0;
   }
-  let inter = 0;
-  const smaller = a.size <= b.size ? a : b;
-  const larger = a.size <= b.size ? b : a;
-  for (const t of smaller) {
-    if (larger.has(t)) {
-      inter++;
-    }
-  }
+  const inter = intersectionCount(a, b);
   const union = a.size + b.size - inter;
   return union === 0 ? 0 : inter / union;
 }
@@ -31,6 +11,11 @@ export function symmetricTokenSimilarity(a: Set<string>, b: Set<string>): number
   if (a.size === 0 || b.size === 0) {
     return 0;
   }
+  const inter = intersectionCount(a, b);
+  return Math.max(inter / a.size, inter / b.size);
+}
+
+function intersectionCount(a: Set<string>, b: Set<string>): number {
   let inter = 0;
   const smaller = a.size <= b.size ? a : b;
   const larger = a.size <= b.size ? b : a;
@@ -39,7 +24,7 @@ export function symmetricTokenSimilarity(a: Set<string>, b: Set<string>): number
       inter++;
     }
   }
-  return Math.max(inter / a.size, inter / b.size);
+  return inter;
 }
 
 export function cosineSimilarity(a: readonly number[], b: readonly number[]): number {

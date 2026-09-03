@@ -158,6 +158,17 @@ describe.skipIf(!available)("postgres integration", () => {
     }
   });
 
+  it("refuses to link a forgotten insight", async () => {
+    await withMnemon({ clock }, async (mnemon) => {
+      const a = await mnemon.remember({ content: "node a about widgets" });
+      const b = await mnemon.remember({ content: "node b about widgets" });
+      await mnemon.forget(a.insight.id);
+      await expect(
+        mnemon.link({ sourceId: a.insight.id, targetId: b.insight.id, edgeType: "entity" }),
+      ).rejects.toThrow(/not found/);
+    });
+  });
+
   it("rolls back a failed transaction without leftover rows", async () => {
     await withMnemon({ clock }, async (mnemon, { pool, schema }) => {
       await mnemon.remember({ content: "stable row" });
@@ -181,6 +192,19 @@ describe.skipIf(!available)("postgres integration", () => {
         embeddingProvider: new FakeEmbeddingProvider("b", 8, { "document:other": unitVector(8, 0) }),
       });
       await expect(second.initialize()).rejects.toThrow(/dimension/);
+    });
+  });
+
+  it("rejects a second provider with a different model", async () => {
+    const first = new FakeEmbeddingProvider("a", 4, { "document:dim": unitVector(4, 0) });
+    await withMnemon({ clock, embeddingProvider: first }, async (mnemon, { pool, schema }) => {
+      await mnemon.remember({ content: "dim" });
+      const second = createMnemon({
+        pool,
+        schema,
+        embeddingProvider: new FakeEmbeddingProvider("b", 4, { "document:other": unitVector(4, 0) }),
+      });
+      await expect(second.initialize()).rejects.toThrow(/model/);
     });
   });
 

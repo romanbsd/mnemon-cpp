@@ -1,7 +1,7 @@
 import type { Insight } from "../types.js";
 import type { EdgeRecord, InsightRecord } from "./schema.js";
 
-function asDate(value: unknown): Date {
+export function asDate(value: unknown): Date {
   if (value instanceof Date) {
     return value;
   }

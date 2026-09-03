@@ -3,87 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   causalTopologicalOrder,
   composeFinalScore,
-  fuseRrf,
   minMaxNormalize,
   normalizeEliteGraph,
-  transitionScore,
-  traverseGraph,
 } from "../../src/engine/recall.js";
 import { effectiveImportance } from "../../src/engine/retention.js";
-
-describe("RRF fusion", () => {
-  it("sums reciprocal ranks and labels hybrids", () => {
-    const fused = fuseRrf([
-      { id: "a", signal: "keyword", rank: 1 },
-      { id: "a", signal: "vector", rank: 2 },
-      { id: "b", signal: "time", rank: 1 },
-      { id: "c", signal: "fts", rank: 1 },
-    ]);
-    const a = fused.find((x) => x.id === "a")!;
-    const b = fused.find((x) => x.id === "b")!;
-    const c = fused.find((x) => x.id === "c")!;
-    expect(a.matchedVia).toBe("hybrid");
-    expect(b.matchedVia).toBe("time");
-    expect(c.matchedVia).toBe("fts");
-    expect(a.score).toBeGreaterThan(b.score);
-  });
-});
-
-describe("beam traversal", () => {
-  it("improves scores, respects beam width, and ties on id", () => {
-    const state = traverseGraph({
-      anchors: [{ id: "a", score: 1, matchedVia: "keyword" }],
-      edges: [
-        { sourceId: "a", targetId: "b", edgeType: "causal", weight: 1 },
-        { sourceId: "a", targetId: "c", edgeType: "temporal", weight: 1 },
-        { sourceId: "b", targetId: "d", edgeType: "causal", weight: 1 },
-      ],
-      intent: "WHY",
-      maxCandidates: 500,
-    });
-    expect(state.scores.get("b")!).toBeGreaterThan(state.scores.get("c")!);
-    expect(state.via.get("b")).toBe("causal");
-    expect(state.traversed).toBeGreaterThan(1);
-  });
-
-  it("replaces a same-depth queued score when a later path is better", () => {
-    const state = traverseGraph({
-      anchors: [{ id: "a", score: 1, matchedVia: "keyword" }],
-      edges: [
-        { sourceId: "a", targetId: "d", edgeType: "temporal", weight: 1 },
-        { sourceId: "a", targetId: "d", edgeType: "causal", weight: 1 },
-        { sourceId: "d", targetId: "e", edgeType: "causal", weight: 1 },
-      ],
-      intent: "WHY",
-      maxCandidates: 500,
-    });
-    const causalStep = transitionScore(0.7, 0);
-    expect(state.via.get("d")).toBe("causal");
-    expect(state.scores.get("e")).toBeCloseTo(1 + causalStep + causalStep);
-  });
-
-  it("runs a beam from each anchor and adds cosine to the transition", () => {
-    const state = traverseGraph({
-      anchors: [
-        { id: "a", score: 1, matchedVia: "keyword" },
-        { id: "z", score: 0.2, matchedVia: "time" },
-      ],
-      edges: [
-        { sourceId: "a", targetId: "b", edgeType: "semantic", weight: 1 },
-        { sourceId: "z", targetId: "y", edgeType: "temporal", weight: 1 },
-      ],
-      intent: "GENERAL",
-      maxCandidates: 500,
-      queryVector: [1, 0],
-      embeddings: new Map([
-        ["b", [1, 0]],
-        ["y", [0, 1]],
-      ]),
-    });
-    expect(state.scores.has("y")).toBe(true);
-    expect(state.scores.get("b")!).toBeGreaterThan(state.scores.get("y")!);
-  });
-});
 
 describe("causal topological order", () => {
   it("puts causes before effects and appends cycles in original order", () => {

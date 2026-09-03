@@ -75,3 +75,7 @@ export function insightTokens(content: string, tags: readonly string[], entities
 export function sortedSearchTokens(content: string, tags: readonly string[], entities: readonly string[]): string[] {
   return [...insightTokens(content, tags, entities)].sort();
 }
+
+export function sortedTokens(text: string): string[] {
+  return [...tokenize(text)].sort();
+}

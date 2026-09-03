@@ -68,6 +68,13 @@ function requireNonEmptyTrimmed(value: string, field: string, max: number): stri
   return trimmed;
 }
 
+function requireLimit(limit: number, max: number, field = "limit"): number {
+  if (!Number.isInteger(limit) || limit < 1 || limit > max) {
+    fail(field, "out_of_range", `${field} must be an integer from 1 through ${max}`);
+  }
+  return limit;
+}
+
 function requireStringList(values: readonly string[] | undefined, field: string, maxItems: number, maxLen: number): string[] {
   if (!values) {
     return [];
@@ -174,10 +181,7 @@ export function validateRecallInput(
   defaultLimit: number,
 ): ValidatedRecall {
   const query = requireNonEmptyTrimmed(input.query, "query", MAX_CONTENT_CODE_POINTS);
-  const limit = input.limit ?? defaultLimit;
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RECALL_LIMIT) {
-    fail("limit", "out_of_range", `limit must be an integer from 1 through ${MAX_RECALL_LIMIT}`);
-  }
+  const limit = requireLimit(input.limit ?? defaultLimit, MAX_RECALL_LIMIT);
   if (input.intent && !["WHY", "WHEN", "ENTITY", "GENERAL"].includes(input.intent)) {
     fail("intent", "invalid_enum", `invalid intent "${String(input.intent)}"`);
   }
@@ -202,10 +206,7 @@ export function validateSearchInput(input: { query: string; limit?: number; sour
   source?: string;
 } {
   const query = requireNonEmptyTrimmed(input.query, "query", MAX_CONTENT_CODE_POINTS);
-  const limit = input.limit ?? DEFAULT_SEARCH_LIMIT;
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_SEARCH_LIMIT) {
-    fail("limit", "out_of_range", `limit must be an integer from 1 through ${MAX_SEARCH_LIMIT}`);
-  }
+  const limit = requireLimit(input.limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
   return {
     query,
     limit,
@@ -226,10 +227,7 @@ export function validateListInput(input?: {
   since?: Date;
   until?: Date;
 } {
-  const limit = input?.limit ?? DEFAULT_LIST_LIMIT;
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIST_LIMIT) {
-    fail("limit", "out_of_range", `limit must be an integer from 1 through ${MAX_LIST_LIMIT}`);
-  }
+  const limit = requireLimit(input?.limit ?? DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT);
   if (input?.category && !INSIGHT_CATEGORIES.includes(input.category)) {
     fail(
       "category",
@@ -255,10 +253,7 @@ export function validateLogInput(input?: { limit?: number; operation?: string })
   limit: number;
   operation?: string;
 } {
-  const limit = input?.limit ?? DEFAULT_LOG_LIMIT;
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LOG_LIMIT) {
-    fail("limit", "out_of_range", `limit must be an integer from 1 through ${MAX_LOG_LIMIT}`);
-  }
+  const limit = requireLimit(input?.limit ?? DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT);
   return {
     limit,
     operation: input?.operation

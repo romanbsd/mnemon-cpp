@@ -10,14 +10,16 @@ import {
   MAX_ENTITY_LINKS,
   MAX_TEMPORAL_PROXIMITY,
   MAX_TOTAL_ENTITY_EDGES,
+  SEARCH_FTS_WEIGHT,
+  SEARCH_KEYWORD_WEIGHT,
   VECTOR_ANCHOR_MIN_COSINE,
 } from "../engine/constants.js";
 import { intentWeights, traversalLimits } from "../engine/intent.js";
 import type { RecallIntent } from "../types.js";
 import { uniquePreserveOrder } from "../engine/normalize.js";
-import { MnemonDatabaseError, MnemonNotFoundError } from "../errors.js";
+import { MnemonConfigurationError, MnemonDatabaseError, MnemonNotFoundError } from "../errors.js";
 import { wrapDatabaseError, withTransaction } from "./transaction.js";
-import { mapEdgeRow, mapInsightRow } from "./row-mappers.js";
+import { asDate, mapEdgeRow, mapInsightRow } from "./row-mappers.js";
 import type {
   AnchorHit,
   EdgeContext,
@@ -352,8 +354,8 @@ export class PostgresMnemonStore implements MnemonStore {
           OR (q.fts <> ''::tsquery AND i.search_tsv @@ q.fts)
         )
       ORDER BY
-        (COALESCE(matched.count, 0)::double precision / NULLIF(q.token_count, 0) * 0.45
-         + CASE WHEN q.fts <> ''::tsquery THEN ts_rank_cd(i.search_tsv, q.fts) ELSE 0 END * 0.55) DESC NULLS LAST,
+        (COALESCE(matched.count, 0)::double precision / NULLIF(q.token_count, 0) * ${SEARCH_KEYWORD_WEIGHT}
+         + CASE WHEN q.fts <> ''::tsquery THEN ts_rank_cd(i.search_tsv, q.fts) ELSE 0 END * ${SEARCH_FTS_WEIGHT}) DESC NULLS LAST,
         i.id ASC
       LIMIT $3
       `,
@@ -406,7 +408,7 @@ export class PostgresMnemonStore implements MnemonStore {
       operation: String(row.operation),
       insightId: row.insight_id == null ? null : String(row.insight_id),
       detail: (row.detail ?? {}) as Record<string, unknown>,
-      createdAt: new Date(String(row.created_at)),
+      createdAt: asDate(row.created_at),
     }));
   }
 
@@ -784,6 +786,24 @@ class PostgresMnemonStoreTx implements MnemonStoreTx {
     }
   }
 
+  private async lockActiveInsightIds(ids: readonly string[]): Promise<Set<string>> {
+    const unique = [...new Set(ids)].sort();
+    if (unique.length === 0) {
+      return new Set();
+    }
+    const result = await this.client.query<{ id: string; deleted_at: Date | null }>(
+      `
+      SELECT id, deleted_at
+      FROM ${this.s}.insights
+      WHERE id = ANY($1::uuid[])
+      ORDER BY id
+      FOR UPDATE
+      `,
+      [unique],
+    );
+    return new Set(result.rows.filter((row) => row.deleted_at == null).map((row) => String(row.id)));
+  }
+
   async upsertEdges(edges: readonly NewEdgeRecord[]): Promise<EdgeRecord[]> {
     if (edges.length === 0) {
       return [];
@@ -792,13 +812,25 @@ class PostgresMnemonStoreTx implements MnemonStoreTx {
     for (const edge of edges) {
       unique.set(`${edge.sourceId}\0${edge.targetId}\0${edge.edgeType}`, edge);
     }
-    const deduped = [...unique.values()];
-    const sourceIds = deduped.map((e) => e.sourceId);
-    const targetIds = deduped.map((e) => e.targetId);
-    const types = deduped.map((e) => e.edgeType);
-    const weights = deduped.map((e) => e.weight);
-    const metas = deduped.map((e) => JSON.stringify(e.metadata));
-    const created = deduped.map((e) => e.createdAt);
+    const active = await this.lockActiveInsightIds(
+      [...unique.values()].flatMap((edge) => [edge.sourceId, edge.targetId]),
+    );
+    const deduped = [...unique.values()].filter(
+      (edge) => active.has(edge.sourceId) && active.has(edge.targetId),
+    );
+    return this.upsertEdgeRows(deduped);
+  }
+
+  private async upsertEdgeRows(edges: readonly NewEdgeRecord[]): Promise<EdgeRecord[]> {
+    if (edges.length === 0) {
+      return [];
+    }
+    const sourceIds = edges.map((e) => e.sourceId);
+    const targetIds = edges.map((e) => e.targetId);
+    const types = edges.map((e) => e.edgeType);
+    const weights = edges.map((e) => e.weight);
+    const metas = edges.map((e) => JSON.stringify(e.metadata));
+    const created = edges.map((e) => e.createdAt);
     const result = await this.client.query(
       `
       INSERT INTO ${this.s}.edges (source_id, target_id, edge_type, weight, metadata, created_at)
@@ -850,73 +882,46 @@ class PostgresMnemonStoreTx implements MnemonStoreTx {
         ON CONFLICT (key) DO UPDATE SET key = ${this.s}.settings.key
         RETURNING value
       )
-      SELECT value FROM ins_dim
+      SELECT ins_dim.value AS dimensions, ins_model.value AS model FROM ins_dim, ins_model
       `,
       [dimensions, model, at],
     );
-    const stored = dim.rows[0]?.value;
-    if (Number(stored) !== dimensions) {
-      throw new Error(`embedding dimension mismatch: store has ${String(stored)}, got ${dimensions}`);
+    const stored = dim.rows[0];
+    if (Number(stored?.dimensions) !== dimensions) {
+      throw new MnemonConfigurationError(
+        `embedding dimension mismatch: store has ${String(stored?.dimensions)}, got ${dimensions}`,
+      );
+    }
+    if (String(stored?.model) !== model) {
+      throw new MnemonConfigurationError(
+        `embedding model mismatch: store has ${String(stored?.model)}, got ${model}`,
+      );
     }
   }
 
   async linkAndLog(edge: NewEdgeRecord, at: Date): Promise<EdgeRecord> {
-    const result = await this.client.query(
-      `
-      WITH
-      src AS (
-        SELECT EXISTS (
-          SELECT 1 FROM ${this.s}.insights WHERE id = $1::uuid AND deleted_at IS NULL
-        ) AS ok
-      ),
-      tgt AS (
-        SELECT EXISTS (
-          SELECT 1 FROM ${this.s}.insights WHERE id = $2::uuid AND deleted_at IS NULL
-        ) AS ok
-      ),
-      upserted AS (
-        INSERT INTO ${this.s}.edges (source_id, target_id, edge_type, weight, metadata, created_at)
-        SELECT $1::uuid, $2::uuid, $3, $4, $5::jsonb, $6
-        WHERE (SELECT ok FROM src) AND (SELECT ok FROM tgt)
-        ON CONFLICT (source_id, target_id, edge_type)
-        DO UPDATE SET
-            weight = EXCLUDED.weight,
-            metadata = EXCLUDED.metadata,
-            created_at = EXCLUDED.created_at
-        RETURNING *
-      ),
-      logged AS (
-        INSERT INTO ${this.s}.oplog (operation, insight_id, detail, created_at)
-        SELECT 'link', $1::uuid, $7::jsonb, $6
-        FROM upserted
-      )
-      SELECT src.ok AS src_ok, tgt.ok AS tgt_ok,
-             u.source_id, u.target_id, u.edge_type, u.weight, u.metadata, u.created_at
-      FROM src, tgt
-      LEFT JOIN upserted AS u ON true
-      `,
-      [
-        edge.sourceId,
-        edge.targetId,
-        edge.edgeType,
-        edge.weight,
-        JSON.stringify(edge.metadata),
-        at,
-        JSON.stringify({
-          source_id: edge.sourceId,
-          target_id: edge.targetId,
-          edge_type: edge.edgeType,
-        }),
-      ],
-    );
-    const row = result.rows[0] as Record<string, unknown> | undefined;
-    if (!row?.src_ok) {
+    const active = await this.lockActiveInsightIds([edge.sourceId, edge.targetId]);
+    if (!active.has(edge.sourceId)) {
       throw new MnemonNotFoundError(`insight ${edge.sourceId} not found`, edge.sourceId);
     }
-    if (!row.tgt_ok) {
+    if (!active.has(edge.targetId)) {
       throw new MnemonNotFoundError(`insight ${edge.targetId} not found`, edge.targetId);
     }
-    return mapEdgeRow(row);
+    const [persisted] = await this.upsertEdgeRows([edge]);
+    if (!persisted) {
+      throw new Error("link failed to persist edge");
+    }
+    await this.appendOp(
+      "link",
+      edge.sourceId,
+      {
+        source_id: edge.sourceId,
+        target_id: edge.targetId,
+        edge_type: edge.edgeType,
+      },
+      at,
+    );
+    return persisted;
   }
 
   async forgetAndLog(id: string, at: Date): Promise<boolean> {
