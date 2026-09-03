@@ -32,6 +32,32 @@ export function uniqueSchema(): string {
   return `mnemon_t_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 }
 
+export interface TestEdgeRow {
+  sourceId: string;
+  targetId: string;
+  edgeType: string;
+  weight: number;
+  metadata: Record<string, unknown>;
+}
+
+export async function loadEdges(pool: Pool, schema: string, insightId: string): Promise<TestEdgeRow[]> {
+  const result = await pool.query(
+    `
+    SELECT source_id::text AS source_id, target_id::text AS target_id, edge_type, weight, metadata
+    FROM ${quoteIdent(schema)}.edges
+    WHERE source_id = $1::uuid OR target_id = $1::uuid
+    `,
+    [insightId],
+  );
+  return result.rows.map((row) => ({
+    sourceId: String(row.source_id),
+    targetId: String(row.target_id),
+    edgeType: String(row.edge_type),
+    weight: Number(row.weight),
+    metadata: (row.metadata ?? {}) as Record<string, unknown>,
+  }));
+}
+
 export async function withMnemon(
   options: {
     clock?: Clock;
