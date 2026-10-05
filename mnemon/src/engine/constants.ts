@@ -1,0 +1,359 @@
+import type { EdgeType, RecallIntent } from "../types.js";
+
+export const MAX_CONTENT_CODE_POINTS = 8000;
+export const MAX_TAG_CODE_POINTS = 100;
+export const MAX_ENTITY_CODE_POINTS = 200;
+export const MAX_SOURCE_CODE_POINTS = 200;
+export const MAX_TAGS = 20;
+export const MAX_ENTITIES = 50;
+export const MAX_RECALL_LIMIT = 100;
+export const DEFAULT_BRIEF_EXCERPT_CHARS = 240;
+export const MAX_RELATED_DEPTH = 5;
+export const MAX_RELATED_LIMIT = 100;
+export const DEFAULT_RELATED_DEPTH = 2;
+export const DEFAULT_RELATED_LIMIT = 20;
+export const DEFAULT_SEARCH_LIMIT = 20;
+export const MAX_SEARCH_LIMIT = 100;
+export const DEFAULT_LIST_LIMIT = 20;
+export const MAX_LIST_LIMIT = 100;
+export const DEFAULT_LOG_LIMIT = 50;
+export const MAX_LOG_LIMIT = 500;
+
+export const SEARCH_KEYWORD_WEIGHT = 0.45;
+export const SEARCH_FTS_WEIGHT = 0.55;
+export const RRF_K = 60;
+export const ANCHOR_TOP_K = 20;
+export const VECTOR_ANCHOR_MIN_COSINE = 0.1;
+export const SEMANTIC_CANDIDATE_MIN_COSINE = 0.4;
+export const SEMANTIC_EDGE_MIN_COSINE = 0.8;
+export const DUPLICATE_TOKEN_SIMILARITY = 0.9;
+export const DUPLICATE_MAX_LENGTH_RATIO = 1.25;
+export const CAUSAL_MIN_OVERLAP = 0.15;
+export const TEMPORAL_WINDOW_HOURS = 24;
+export const MAX_TEMPORAL_PROXIMITY = 10;
+export const MAX_ENTITY_LINKS = 5;
+export const MAX_TOTAL_ENTITY_EDGES = 50;
+export const MAX_SEMANTIC_EDGES = 3;
+export const CAUSAL_LOOKBACK = 10;
+export const DEDUP_CANDIDATE_LIMIT = 5;
+export const GRAPH_LAMBDA1 = 1;
+export const GRAPH_LAMBDA2 = 0.4;
+/** Graph credit only for keyword hits or near-duplicate cosine (Go Diff cosine floor). */
+export const GRAPH_ELITE_MIN_COSINE = 0.85;
+
+export const ALGORITHM_VERSION = "mnemon-ts-v1" as const;
+
+export const STOPWORDS: ReadonlySet<string> = new Set([
+  "a",
+  "an",
+  "the",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "shall",
+  "can",
+  "to",
+  "of",
+  "in",
+  "for",
+  "on",
+  "with",
+  "at",
+  "by",
+  "from",
+  "as",
+  "into",
+  "about",
+  "that",
+  "this",
+  "it",
+  "its",
+  "or",
+  "and",
+  "but",
+  "if",
+  "not",
+  "no",
+  "so",
+  "up",
+  "out",
+  "than",
+  "then",
+  "too",
+  "very",
+  "just",
+  "also",
+  "more",
+  "some",
+  "any",
+  "all",
+  "each",
+  "i",
+  "me",
+  "my",
+  "we",
+  "you",
+  "your",
+  "he",
+  "she",
+  "they",
+  "them",
+  "his",
+  "her",
+  "our",
+  "their",
+  "what",
+  "which",
+  "who",
+  "how",
+  "when",
+  "where",
+]);
+
+export const ACRONYM_STOPWORDS: ReadonlySet<string> = new Set([
+  "IN",
+  "ON",
+  "AT",
+  "TO",
+  "BY",
+  "OR",
+  "AN",
+  "IF",
+  "IS",
+  "IT",
+  "OF",
+  "AS",
+  "DO",
+  "NO",
+  "SO",
+  "UP",
+  "WE",
+  "HE",
+  "MY",
+  "BE",
+  "GO",
+  "THE",
+  "AND",
+  "FOR",
+  "ARE",
+  "BUT",
+  "NOT",
+  "YOU",
+  "ALL",
+  "CAN",
+  "HER",
+  "WAS",
+  "ONE",
+  "OUR",
+  "OUT",
+  "HAS",
+  "HAD",
+  "HOW",
+  "MAN",
+  "NEW",
+  "NOW",
+  "OLD",
+  "SEE",
+  "WAY",
+  "MAY",
+  "SAY",
+  "SHE",
+  "TWO",
+  "USE",
+  "BOY",
+  "DID",
+  "GET",
+  "HIM",
+  "HIS",
+  "LET",
+  "PUT",
+  "TOP",
+  "TOO",
+  "ANY",
+]);
+
+export const TECH_DICTIONARY: ReadonlySet<string> = new Set([
+  "Go",
+  "Rust",
+  "Python",
+  "Java",
+  "Kotlin",
+  "Swift",
+  "Ruby",
+  "Elixir",
+  "Zig",
+  "Lua",
+  "Dart",
+  "Scala",
+  "Perl",
+  "Haskell",
+  "OCaml",
+  "Julia",
+  "Clojure",
+  "JavaScript",
+  "TypeScript",
+  "React",
+  "Vue",
+  "Angular",
+  "Svelte",
+  "Next",
+  "Nuxt",
+  "Node",
+  "Deno",
+  "Bun",
+  "Vite",
+  "Webpack",
+  "SQLite",
+  "PostgreSQL",
+  "Postgres",
+  "MySQL",
+  "Redis",
+  "MongoDB",
+  "DynamoDB",
+  "Cassandra",
+  "Qdrant",
+  "Milvus",
+  "Chroma",
+  "Pinecone",
+  "Neo4j",
+  "Weaviate",
+  "Elasticsearch",
+  "Docker",
+  "Kubernetes",
+  "Terraform",
+  "Ansible",
+  "Nginx",
+  "Caddy",
+  "Kafka",
+  "RabbitMQ",
+  "AWS",
+  "GCP",
+  "Azure",
+  "Vercel",
+  "Netlify",
+  "Cloudflare",
+  "Supabase",
+  "Firebase",
+  "Ollama",
+  "OpenAI",
+  "Claude",
+  "Anthropic",
+  "PyTorch",
+  "TensorFlow",
+  "LangChain",
+  "LlamaIndex",
+  "FAISS",
+  "Hugging",
+  "Git",
+  "GitHub",
+  "GitLab",
+  "Cobra",
+  "FastAPI",
+  "Flask",
+  "Django",
+  "Rails",
+  "Spring",
+  "Express",
+  "Gin",
+  "Echo",
+  "Fiber",
+  "Pytest",
+  "Jest",
+  "Vitest",
+  "gRPC",
+  "GraphQL",
+  "WebSocket",
+  "OAuth",
+  "JWT",
+  "YAML",
+  "TOML",
+  "Protobuf",
+  "MAGMA",
+  "MCP",
+  "RLM",
+]);
+
+export const INTENT_WEIGHTS: Record<RecallIntent, Record<EdgeType, number>> = {
+  WHY: { causal: 0.7, temporal: 0.2, entity: 0.05, semantic: 0.05 },
+  WHEN: { causal: 0.15, temporal: 0.65, entity: 0.1, semantic: 0.1 },
+  ENTITY: { causal: 0.1, temporal: 0.05, entity: 0.55, semantic: 0.3 },
+  GENERAL: { causal: 0.25, temporal: 0.25, entity: 0.25, semantic: 0.25 },
+};
+
+export const TRAVERSAL_LIMITS: Record<RecallIntent, { beam: number; depth: number; visited: number }> = {
+  WHY: { beam: 15, depth: 5, visited: 500 },
+  WHEN: { beam: 10, depth: 5, visited: 400 },
+  ENTITY: { beam: 10, depth: 4, visited: 400 },
+  GENERAL: { beam: 10, depth: 4, visited: 500 },
+};
+
+export const WHY_TERMS = ["why", "reason", "because", "cause", "motivation", "rationale", "为什么", "原因", "理由"];
+export const WHEN_TERMS = [
+  "when",
+  "time",
+  "date",
+  "before",
+  "after",
+  "during",
+  "timeline",
+  "history",
+  "sequence",
+  "什么时候",
+  "何时",
+  "时间",
+  "之前",
+  "之后",
+];
+export const ENTITY_TERMS = [
+  "what is",
+  "who is",
+  "tell me about",
+  "describe",
+  "about",
+  "是什么",
+  "谁是",
+  "关于",
+  "介绍",
+];
+
+export const CAUSAL_PHRASES = [
+  "because",
+  "therefore",
+  "due to",
+  "caused by",
+  "as a result",
+  "decided to",
+  "chosen because",
+  "so that",
+  "in order to",
+  "leads to",
+  "results in",
+  "因为",
+  "所以",
+  "由于",
+  "导致",
+  "因此",
+  "决定",
+  "为了",
+  "以便",
+];
+
+export const PREVENTS_PHRASES = ["despite", "prevented", "prevents", "blocked", "阻止", "防止"];
+export const ENABLES_PHRASES = ["so that", "in order to", "enables", "leads to", "为了", "以便"];
+export const CAUSES_PHRASES = ["because", "caused by", "due to", "因为", "由于"];

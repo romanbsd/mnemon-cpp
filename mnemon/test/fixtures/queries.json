@@ -1,0 +1,123 @@
+{
+  "queries": [
+    {
+      "id": "exact-dark",
+      "query": "User prefers dark mode in the editor.",
+      "expected": [{ "key": "dark-mode", "maxRank": 2 }],
+      "mandatory": true
+    },
+    {
+      "id": "theme-preference",
+      "query": "what is the editor color theme preference",
+      "expected": [
+        { "key": "dark-mode", "maxRank": 5 },
+        { "key": "dark-mode-ext", "maxRank": 5 },
+        { "key": "dim-interface", "maxRank": 5 }
+      ],
+      "mandatory": true
+    },
+    {
+      "id": "not-discard-negation",
+      "query": "does the user prefer dark mode",
+      "expected": [
+        { "key": "dark-mode", "maxRank": 5 },
+        { "key": "dark-mode-neg", "maxRank": 5 }
+      ],
+      "mandatory": true
+    },
+    {
+      "id": "unrelated-dark",
+      "query": "coffee roast preference",
+      "expected": [{ "key": "dark-coffee", "maxRank": 5 }],
+      "mandatory": true
+    },
+    {
+      "id": "when-deploy",
+      "query": "when did the checkout deploy happen",
+      "intent": "WHEN",
+      "expected": [
+        { "key": "deploy-start", "maxRank": 5 },
+        { "key": "deploy-finish", "maxRank": 5 }
+      ],
+      "mandatory": true
+    },
+    {
+      "id": "why-postgres",
+      "query": "why did we choose PostgreSQL",
+      "intent": "WHY",
+      "expected": [
+        { "key": "chose-pg", "maxRank": 5 },
+        { "key": "use-pgvector", "maxRank": 5 }
+      ],
+      "mandatory": true
+    },
+    {
+      "id": "entity-typescript",
+      "query": "tell me about TypeScript",
+      "expected": [
+        { "key": "ts-services", "maxRank": 5 },
+        { "key": "ts-tests", "maxRank": 5 }
+      ],
+      "mandatory": true
+    },
+    {
+      "id": "cjk-why",
+      "query": "为什么选择 PostgreSQL",
+      "expected": [{ "key": "cjk-cause", "maxRank": 5 }],
+      "mandatory": true
+    },
+    {
+      "id": "forgotten-absent",
+      "query": "lunar landings",
+      "expected": [],
+      "forbidden": ["soft-delete-me"],
+      "mandatory": true
+    },
+    {
+      "id": "causal-cycle",
+      "query": "why is the release freeze in place",
+      "intent": "WHY",
+      "expected": [
+        { "key": "cycle-a", "maxRank": 5 },
+        { "key": "cycle-b", "maxRank": 5 }
+      ],
+      "mandatory": true
+    },
+    {
+      "id": "tie-query",
+      "query": "qzxtoken widget",
+      "expected": [
+        { "key": "tie-alpha", "maxRank": 2 },
+        { "key": "tie-beta", "maxRank": 2 }
+      ],
+      "mandatory": true
+    },
+    {
+      "id": "embedding-local",
+      "query": "where do embeddings run",
+      "expected": [
+        { "key": "ollama-local", "maxRank": 5 },
+        { "key": "no-network", "maxRank": 5 }
+      ],
+      "mandatory": true
+    },
+    {
+      "id": "sql-layer",
+      "query": "how does the TypeScript storage layer talk to postgres",
+      "expected": [{ "key": "no-orm", "maxRank": 5 }],
+      "mandatory": true
+    },
+    {
+      "id": "recall-beam",
+      "query": "how does recall traverse the graph",
+      "expected": [{ "key": "beam-search", "maxRank": 5 }],
+      "mandatory": true
+    },
+    {
+      "id": "duplicates",
+      "query": "how are exact duplicates handled",
+      "expected": [{ "key": "hash-dup", "maxRank": 5 }],
+      "mandatory": true
+    }
+  ]
+}
