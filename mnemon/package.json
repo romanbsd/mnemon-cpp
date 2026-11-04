@@ -1,0 +1,43 @@
+{
+  "name": "mnemon",
+  "version": "0.1.0",
+  "description": "In-process Mnemon memory library for TypeScript, backed by PostgreSQL and pgvector.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "test:parity": "vitest run test/integration/parity.test.ts",
+    "test:watch": "vitest",
+    "db:up": "docker compose up -d --build --wait postgres",
+    "embed:up": "docker compose up -d --wait llama",
+    "db:down": "docker compose down"
+  },
+  "dependencies": {
+    "pg": "^8.23.0",
+    "pgvector": "^0.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "@types/pg": "^8.23.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11"
+  }
+}

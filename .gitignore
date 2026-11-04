@@ -9,3 +9,5 @@ compile_commands.json
 .serena/
 .codegraph/
 .codex/
+
+.worktrees/
