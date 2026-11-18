@@ -1,0 +1,620 @@
+{
+  "User prefers dark mode in the editor.": [
+    0.99940094344449,
+    0.010430180624183483,
+    0.03299729870196229,
+    0.0003792792954248539
+  ],
+  "document:User prefers dark mode in the editor.": [
+    0.99940094344449,
+    0.010430180624183483,
+    0.03299729870196229,
+    0.0003792792954248539
+  ],
+  "User prefers dark mode in the editor because it reduces eye strain at night.": [
+    0.997754741024006,
+    0.04431428804782809,
+    0.023621272483644047,
+    0.04431428804782809
+  ],
+  "document:User prefers dark mode in the editor because it reduces eye strain at night.": [
+    0.997754741024006,
+    0.04431428804782809,
+    0.023621272483644047,
+    0.04431428804782809
+  ],
+  "User does not prefer dark mode in the editor.": [
+    0.9985508077399525,
+    0.04537141502848835,
+    0.024868850915196538,
+    0.014807407415155193
+  ],
+  "document:User does not prefer dark mode in the editor.": [
+    0.9985508077399525,
+    0.04537141502848835,
+    0.024868850915196538,
+    0.014807407415155193
+  ],
+  "The operator likes a dim interface after sunset.": [
+    0.9983238819591881,
+    0.0005729809921326889,
+    0.03456985319200556,
+    0.04641146036274779
+  ],
+  "document:The operator likes a dim interface after sunset.": [
+    0.9983238819591881,
+    0.0005729809921326889,
+    0.03456985319200556,
+    0.04641146036274779
+  ],
+  "Dark roast coffee is preferred in the morning standup.": [
+    0.24651416155133132,
+    0.9678660337753288,
+    0.04620833732217491,
+    0.018190612429996457
+  ],
+  "document:Dark roast coffee is preferred in the morning standup.": [
+    0.24651416155133132,
+    0.9678660337753288,
+    0.04620833732217491,
+    0.018190612429996457
+  ],
+  "Production deploy started for checkout service.": [
+    0.004433377967133114,
+    0.9992448426790459,
+    0.026214756675221888,
+    0.028335067876894247
+  ],
+  "document:Production deploy started for checkout service.": [
+    0.004433377967133114,
+    0.9992448426790459,
+    0.026214756675221888,
+    0.028335067876894247
+  ],
+  "Production deploy finished for checkout service.": [
+    0.019690455176561483,
+    0.9983439437116222,
+    0.04241021114951704,
+    0.03351164006010945
+  ],
+  "document:Production deploy finished for checkout service.": [
+    0.019690455176561483,
+    0.9983439437116222,
+    0.04241021114951704,
+    0.03351164006010945
+  ],
+  "Rollback of checkout service completed after error budget burn.": [
+    0.046317725951654995,
+    0.9980597851507247,
+    0.005232546446421276,
+    0.041278977521767846
+  ],
+  "document:Rollback of checkout service completed after error budget burn.": [
+    0.046317725951654995,
+    0.9980597851507247,
+    0.005232546446421276,
+    0.041278977521767846
+  ],
+  "We chose PostgreSQL because concurrent writers share one memory store.": [
+    0.02806525095993295,
+    0.030871776055926243,
+    0.9991229341736129,
+    0.003554931788258173
+  ],
+  "document:We chose PostgreSQL because concurrent writers share one memory store.": [
+    0.02806525095993295,
+    0.030871776055926243,
+    0.9991229341736129,
+    0.003554931788258173
+  ],
+  "Therefore we store embeddings with pgvector in PostgreSQL so recall stays in SQL.": [
+    0.028377111034821417,
+    0.009521267518262452,
+    0.9993597063776253,
+    0.01960260959642269
+  ],
+  "document:Therefore we store embeddings with pgvector in PostgreSQL so recall stays in SQL.": [
+    0.028377111034821417,
+    0.009521267518262452,
+    0.9993597063776253,
+    0.01960260959642269
+  ],
+  "New services are written in TypeScript.": [
+    0.041957390904746886,
+    0.009219337014944384,
+    0.0018814973499886494,
+    0.9990750928439729
+  ],
+  "document:New services are written in TypeScript.": [
+    0.041957390904746886,
+    0.009219337014944384,
+    0.0018814973499886494,
+    0.9990750928439729
+  ],
+  "TypeScript tests run under Vitest.": [
+    0.006437334867082106,
+    0.0448662733160268,
+    0.020482429122533972,
+    0.998762258165466
+  ],
+  "document:TypeScript tests run under Vitest.": [
+    0.006437334867082106,
+    0.0448662733160268,
+    0.020482429122533972,
+    0.998762258165466
+  ],
+  "TypeScript lint uses the repository strict tsconfig.": [
+    0.027087349322899364,
+    0.02863519785563647,
+    0.013156712528265405,
+    0.999136227881802
+  ],
+  "document:TypeScript lint uses the repository strict tsconfig.": [
+    0.027087349322899364,
+    0.02863519785563647,
+    0.013156712528265405,
+    0.999136227881802
+  ],
+  "因为选择了 PostgreSQL 所以向量检索放在数据库里。": [
+    0.009797233437715288,
+    0.013831388382656877,
+    0.9995099132633851,
+    0.02631805845033322
+  ],
+  "document:因为选择了 PostgreSQL 所以向量检索放在数据库里。": [
+    0.009797233437715288,
+    0.013831388382656877,
+    0.9995099132633851,
+    0.02631805845033322
+  ],
+  "Temporary note that will be forgotten about lunar landings.": [
+    0.21519590631611585,
+    0.49561748038186326,
+    0.8101971348152479,
+    0.22723256320756904
+  ],
+  "document:Temporary note that will be forgotten about lunar landings.": [
+    0.21519590631611585,
+    0.49561748038186326,
+    0.8101971348152479,
+    0.22723256320756904
+  ],
+  "Release freeze was chosen because incident reviews were unfinished.": [
+    0.2274014218332865,
+    0.4096373017522801,
+    0.502328953973599,
+    0.7267403225094236
+  ],
+  "document:Release freeze was chosen because incident reviews were unfinished.": [
+    0.2274014218332865,
+    0.4096373017522801,
+    0.502328953973599,
+    0.7267403225094236
+  ],
+  "Incident reviews stayed unfinished because the release freeze blocked time.": [
+    0.7437597304520034,
+    0.6351388106701834,
+    0.08601602566506296,
+    0.18979303956472082
+  ],
+  "document:Incident reviews stayed unfinished because the release freeze blocked time.": [
+    0.7437597304520034,
+    0.6351388106701834,
+    0.08601602566506296,
+    0.18979303956472082
+  ],
+  "Alpha widget shares the same rare token qzxtoken.": [
+    0.4844825714859949,
+    0.48902104990740936,
+    0.5054730341850369,
+    0.5202230890546339
+  ],
+  "document:Alpha widget shares the same rare token qzxtoken.": [
+    0.4844825714859949,
+    0.48902104990740936,
+    0.5054730341850369,
+    0.5202230890546339
+  ],
+  "Beta widget shares the same rare token qzxtoken.": [
+    0.49133489629048194,
+    0.5208523539383512,
+    0.47863118034076607,
+    0.5081486379886353
+  ],
+  "document:Beta widget shares the same rare token qzxtoken.": [
+    0.49133489629048194,
+    0.5208523539383512,
+    0.47863118034076607,
+    0.5081486379886353
+  ],
+  "Ollama runs locally for embeddings when no cloud key exists.": [
+    0.7074308530588478,
+    0.04379521733939326,
+    0.7052608197672562,
+    0.015190233041140904
+  ],
+  "document:Ollama runs locally for embeddings when no cloud key exists.": [
+    0.7074308530588478,
+    0.04379521733939326,
+    0.7052608197672562,
+    0.015190233041140904
+  ],
+  "The library makes no network calls except the injected embedding provider.": [
+    0.7073488510020052,
+    0.019187035387917925,
+    0.7065576330478641,
+    0.00810998402994469
+  ],
+  "document:The library makes no network calls except the injected embedding provider.": [
+    0.7073488510020052,
+    0.019187035387917925,
+    0.7065576330478641,
+    0.00810998402994469
+  ],
+  "MCP mode keeps a warm PostgreSQL connection for recall.": [
+    0.02995133901426853,
+    0.045774687927467,
+    0.9978128475382415,
+    0.03710952066547737
+  ],
+  "document:MCP mode keeps a warm PostgreSQL connection for recall.": [
+    0.02995133901426853,
+    0.045774687927467,
+    0.9978128475382415,
+    0.03710952066547737
+  ],
+  "A store is a named subdirectory under the data directory.": [
+    0.43701985642017116,
+    0.43117343693628923,
+    0.6856255576552396,
+    0.39117861273973364
+  ],
+  "document:A store is a named subdirectory under the data directory.": [
+    0.43701985642017116,
+    0.43117343693628923,
+    0.6856255576552396,
+    0.39117861273973364
+  ],
+  "SQLite opens in WAL mode for the C++ binary.": [
+    0.5271603261484904,
+    0.05001311779295061,
+    0.357814438327507,
+    0.7691355578232073
+  ],
+  "document:SQLite opens in WAL mode for the C++ binary.": [
+    0.5271603261484904,
+    0.05001311779295061,
+    0.357814438327507,
+    0.7691355578232073
+  ],
+  "The TypeScript storage layer uses parameterized SQL through pg.": [
+    0.14439592873949647,
+    0.13402265799671656,
+    0.21368937730126633,
+    0.9568304933140197
+  ],
+  "document:The TypeScript storage layer uses parameterized SQL through pg.": [
+    0.14439592873949647,
+    0.13402265799671656,
+    0.21368937730126633,
+    0.9568304933140197
+  ],
+  "Recall traversal uses a bounded beam rather than a recursive CTE.": [
+    0.02536084599545457,
+    0.612762793684292,
+    0.022377217054812854,
+    0.7895428084173135
+  ],
+  "document:Recall traversal uses a bounded beam rather than a recursive CTE.": [
+    0.02536084599545457,
+    0.612762793684292,
+    0.022377217054812854,
+    0.7895428084173135
+  ],
+  "Exact normalized duplicates are skipped via a unique content hash.": [
+    0.7995561842227171,
+    0.03162953018382842,
+    0.03929729507687773,
+    0.5984690499024988
+  ],
+  "document:Exact normalized duplicates are skipped via a unique content hash.": [
+    0.7995561842227171,
+    0.03162953018382842,
+    0.03929729507687773,
+    0.5984690499024988
+  ],
+  "Recall increments access_count in one batched update.": [
+    0.2841043335105267,
+    0.6310453760280951,
+    0.6716317093867418,
+    0.2645322438198087
+  ],
+  "document:Recall increments access_count in one batched update.": [
+    0.2841043335105267,
+    0.6310453760280951,
+    0.6716317093867418,
+    0.2645322438198087
+  ],
+  "Temporal entity causal and semantic edges are generated on remember.": [
+    0.11451247607521528,
+    0.3024623009377969,
+    0.08484710636732437,
+    0.9424459761045344
+  ],
+  "document:Temporal entity causal and semantic edges are generated on remember.": [
+    0.11451247607521528,
+    0.3024623009377969,
+    0.08484710636732437,
+    0.9424459761045344
+  ],
+  "Weekly planning notes mention checkout latency but not dark mode.": [
+    0.9991628091915745,
+    0.007335720925917059,
+    0.03517384136273051,
+    0.019561922469112154
+  ],
+  "document:Weekly planning notes mention checkout latency but not dark mode.": [
+    0.9991628091915745,
+    0.007335720925917059,
+    0.03517384136273051,
+    0.019561922469112154
+  ],
+  "query:User prefers dark mode in the editor.": [
+    0.99940094344449,
+    0.010430180624183483,
+    0.03299729870196229,
+    0.0003792792954248539
+  ],
+  "what is the editor color theme preference": [
+    0.9992951432548017,
+    0.036046340389361116,
+    0.004151934495109657,
+    0.009624939056845116
+  ],
+  "query:what is the editor color theme preference": [
+    0.9992951432548017,
+    0.036046340389361116,
+    0.004151934495109657,
+    0.009624939056845116
+  ],
+  "document:what is the editor color theme preference": [
+    0.9992951432548017,
+    0.036046340389361116,
+    0.004151934495109657,
+    0.009624939056845116
+  ],
+  "does the user prefer dark mode": [
+    0.9983995054997068,
+    0.03637191722040181,
+    0.02290083676840114,
+    0.03675680523331611
+  ],
+  "query:does the user prefer dark mode": [
+    0.9983995054997068,
+    0.03637191722040181,
+    0.02290083676840114,
+    0.03675680523331611
+  ],
+  "document:does the user prefer dark mode": [
+    0.9983995054997068,
+    0.03637191722040181,
+    0.02290083676840114,
+    0.03675680523331611
+  ],
+  "coffee roast preference": [
+    0.22286393593044923,
+    0.9741855381202212,
+    0.03397830841363857,
+    0.011818542056917762
+  ],
+  "query:coffee roast preference": [
+    0.22286393593044923,
+    0.9741855381202212,
+    0.03397830841363857,
+    0.011818542056917762
+  ],
+  "document:coffee roast preference": [
+    0.22286393593044923,
+    0.9741855381202212,
+    0.03397830841363857,
+    0.011818542056917762
+  ],
+  "when did the checkout deploy happen": [
+    0.0094463083339009,
+    0.9988025199579706,
+    0.03296568826728682,
+    0.03489350629461353
+  ],
+  "query:when did the checkout deploy happen": [
+    0.0094463083339009,
+    0.9988025199579706,
+    0.03296568826728682,
+    0.03489350629461353
+  ],
+  "document:when did the checkout deploy happen": [
+    0.0094463083339009,
+    0.9988025199579706,
+    0.03296568826728682,
+    0.03489350629461353
+  ],
+  "why did we choose PostgreSQL": [
+    0.037770589273037905,
+    0.03870550484910319,
+    0.9981158690073084,
+    0.028982382858024132
+  ],
+  "query:why did we choose PostgreSQL": [
+    0.037770589273037905,
+    0.03870550484910319,
+    0.9981158690073084,
+    0.028982382858024132
+  ],
+  "document:why did we choose PostgreSQL": [
+    0.037770589273037905,
+    0.03870550484910319,
+    0.9981158690073084,
+    0.028982382858024132
+  ],
+  "tell me about TypeScript": [
+    0.0345819316410312,
+    0.009852952590461404,
+    0.04288932304083199,
+    0.9984325291667555
+  ],
+  "query:tell me about TypeScript": [
+    0.0345819316410312,
+    0.009852952590461404,
+    0.04288932304083199,
+    0.9984325291667555
+  ],
+  "document:tell me about TypeScript": [
+    0.0345819316410312,
+    0.009852952590461404,
+    0.04288932304083199,
+    0.9984325291667555
+  ],
+  "为什么选择 PostgreSQL": [
+    0.027218524232948862,
+    0.03358881713853264,
+    0.9983986335660391,
+    0.0364844048228889
+  ],
+  "query:为什么选择 PostgreSQL": [
+    0.027218524232948862,
+    0.03358881713853264,
+    0.9983986335660391,
+    0.0364844048228889
+  ],
+  "document:为什么选择 PostgreSQL": [
+    0.027218524232948862,
+    0.03358881713853264,
+    0.9983986335660391,
+    0.0364844048228889
+  ],
+  "lunar landings": [
+    0.690489201476982,
+    0.5434343860607808,
+    0.2556080064325247,
+    0.40319756663205764
+  ],
+  "query:lunar landings": [
+    0.690489201476982,
+    0.5434343860607808,
+    0.2556080064325247,
+    0.40319756663205764
+  ],
+  "document:lunar landings": [
+    0.690489201476982,
+    0.5434343860607808,
+    0.2556080064325247,
+    0.40319756663205764
+  ],
+  "why is the release freeze in place": [
+    0.7530387843315518,
+    0.6031796035842482,
+    0.17749891437216658,
+    0.19391000621192894
+  ],
+  "query:why is the release freeze in place": [
+    0.7530387843315518,
+    0.6031796035842482,
+    0.17749891437216658,
+    0.19391000621192894
+  ],
+  "document:why is the release freeze in place": [
+    0.7530387843315518,
+    0.6031796035842482,
+    0.17749891437216658,
+    0.19391000621192894
+  ],
+  "qzxtoken widget": [
+    0.47204024276985523,
+    0.5180433818891093,
+    0.5080667975018012,
+    0.5006767349926841
+  ],
+  "query:qzxtoken widget": [
+    0.47204024276985523,
+    0.5180433818891093,
+    0.5080667975018012,
+    0.5006767349926841
+  ],
+  "document:qzxtoken widget": [
+    0.47204024276985523,
+    0.5180433818891093,
+    0.5080667975018012,
+    0.5006767349926841
+  ],
+  "where do embeddings run": [
+    0.7053888606383318,
+    0.013750994648903204,
+    0.707247103158454,
+    0.04515529323896592
+  ],
+  "query:where do embeddings run": [
+    0.7053888606383318,
+    0.013750994648903204,
+    0.707247103158454,
+    0.04515529323896592
+  ],
+  "document:where do embeddings run": [
+    0.7053888606383318,
+    0.013750994648903204,
+    0.707247103158454,
+    0.04515529323896592
+  ],
+  "how does the TypeScript storage layer talk to postgres": [
+    0.11708750429137864,
+    0.10870951532812118,
+    0.2282491139502093,
+    0.9604036128612209
+  ],
+  "query:how does the TypeScript storage layer talk to postgres": [
+    0.11708750429137864,
+    0.10870951532812118,
+    0.2282491139502093,
+    0.9604036128612209
+  ],
+  "document:how does the TypeScript storage layer talk to postgres": [
+    0.11708750429137864,
+    0.10870951532812118,
+    0.2282491139502093,
+    0.9604036128612209
+  ],
+  "how does recall traverse the graph": [
+    0.009947039063414221,
+    0.6045172230803246,
+    0.01801727830354274,
+    0.7963261650201233
+  ],
+  "query:how does recall traverse the graph": [
+    0.009947039063414221,
+    0.6045172230803246,
+    0.01801727830354274,
+    0.7963261650201233
+  ],
+  "document:how does recall traverse the graph": [
+    0.009947039063414221,
+    0.6045172230803246,
+    0.01801727830354274,
+    0.7963261650201233
+  ],
+  "how are exact duplicates handled": [
+    0.7944782124091211,
+    0.004278707631089514,
+    0.02411635210250453,
+    0.6067985367726946
+  ],
+  "query:how are exact duplicates handled": [
+    0.7944782124091211,
+    0.004278707631089514,
+    0.02411635210250453,
+    0.6067985367726946
+  ],
+  "document:how are exact duplicates handled": [
+    0.7944782124091211,
+    0.004278707631089514,
+    0.02411635210250453,
+    0.6067985367726946
+  ]
+}
